@@ -38,7 +38,7 @@ More detail: [docs/architecture.md](docs/architecture.md). Technical choices and
 | [viewer/](viewer/) | Web viewer (Vite + TypeScript + three.js + Spark) | Step 4 |
 | [mobile/](mobile/) | Expo React Native app | Step 6 |
 | [docs/](docs/) | Architecture, decisions, capture guide, benchmarks, API | all |
-| `data/` | Local videos and run outputs. **Gitignored** (personal data) | — |
+| `data/` | Local videos and run outputs. **Gitignored** (personal data) | n/a |
 
 ## Prerequisites
 

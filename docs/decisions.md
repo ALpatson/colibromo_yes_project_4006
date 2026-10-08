@@ -6,7 +6,7 @@ Each entry: **Context** (why a decision was needed), **Decision**, **Consequence
 
 ---
 
-## D-001 · Initial tech stack (PRD §5) — 2026-10-08
+## D-001 · Initial tech stack (PRD §5) · 2026-10-08
 
 **Context:** Stage 1 must go from phone video → Gaussian Splatting scene → phone viewer, with a backend for uploads and long GPU jobs. The team knows Django; the client wants a mobile experience.
 
@@ -33,7 +33,7 @@ Each entry: **Context** (why a decision was needed), **Decision**, **Consequence
 
 ---
 
-## D-002 · Use `pgsty/minio` instead of the official MinIO image — 2026-10-08
+## D-002 · Use `pgsty/minio` instead of the official MinIO image · 2026-10-08
 
 **Context:** The PRD specifies MinIO for local S3-compatible storage. On 2026-10-08 the official `minio/minio` and `minio/mc` images could not be pulled anonymously from Docker Hub or Quay (registry returns 401 Unauthorized; for comparison, `redis` returns 200). MinIO Inc. stopped publishing free community images in 2025.
 
@@ -48,7 +48,7 @@ Each entry: **Context** (why a decision was needed), **Decision**, **Consequence
 
 ---
 
-## D-003 · Pin TypeScript 6.0 for linting — 2026-10-08
+## D-003 · Pin TypeScript 6.0 for linting · 2026-10-08
 
 **Context:** TypeScript 7.0 is the latest release, but `typescript-eslint` 8.71.1 (latest) only supports `typescript >=4.8.4 <6.1.0`.
 
@@ -58,7 +58,7 @@ Each entry: **Context** (why a decision was needed), **Decision**, **Consequence
 
 ---
 
-## D-004 · JS/TS lint tools run from a root `package.json` — 2026-10-08
+## D-004 · JS/TS lint tools run from a root `package.json` · 2026-10-08
 
 **Context:** pre-commit's isolated Node environments cannot reliably resolve ESLint flat-config imports (`typescript-eslint`, `@eslint/js`) from the repo root, and editors (VS Code ESLint/Prettier extensions) need the tools in `node_modules`.
 

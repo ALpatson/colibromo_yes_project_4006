@@ -21,7 +21,7 @@ See the overview diagram in the [root README](../README.md#architecture) and PRD
 | postgres | `postgres:18.6` | 5432 | named volume `postgres-data` |
 | redis | `redis:8.10.2` | 6379 | named volume `redis-data` |
 | minio | `pgsty/minio` (MinIO fork, see decisions D-002) | 9000 (S3 API), 9001 (console) | host folder `MINIO_DATA_DIR` (default `./data/minio`) |
-| minio-init | `pgsty/mc` | — | one-shot: creates bucket `S3_BUCKET` |
+| minio-init | `pgsty/mc` | none | one-shot: creates bucket `S3_BUCKET` |
 
 ## Data model
 
