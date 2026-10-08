@@ -1,0 +1,6 @@
+# Normalise line endings to LF in the repo (team works on Windows + Linux).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ply binary
+*.spz binary

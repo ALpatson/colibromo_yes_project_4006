@@ -1,0 +1,82 @@
+# Local development stack. Step 0: infrastructure services only.
+# The api, worker and viewer services are added in later steps.
+#
+#   cp .env.example .env     # optional, defaults below work without it
+#   docker compose up -d
+#
+# All values come from `.env` (see .env.example); the `:-` fallbacks are the defaults.
+
+services:
+  postgres:
+    image: postgres:18.6
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-colibrimo}
+      POSTGRES_USER: ${POSTGRES_USER:-colibrimo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-colibrimo-dev-password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18+ images keep their data under /var/lib/postgresql/<major>/.
+      # Named volume (inside Docker's own disk): small, and avoids file-permission
+      # problems that Postgres has on Windows bind mounts.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8.10.2
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    # pgsty/minio: community-maintained MinIO fork. The official minio/minio
+    # images are no longer published (see docs/decisions.md, D-002).
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-colibrimo}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-colibrimo-dev-password}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000" # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001" # web console
+    volumes:
+      # Bind mount: stored files land in a normal folder on the host
+      # (default ./data/minio), so you choose which drive holds them.
+      - ${MINIO_DATA_DIR:-./data/minio}:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot job: creates the bucket, then exits. Safe to re-run.
+  minio-init:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-colibrimo}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-colibrimo-dev-password}
+      S3_BUCKET: ${S3_BUCKET:-colibrimo}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\" &&
+      mc mb --ignore-existing \"local/$${S3_BUCKET}\" &&
+      echo \"Bucket '$${S3_BUCKET}' ready.\"
+      "
+    restart: "no"
+
+volumes:
+  postgres-data:
+  redis-data:

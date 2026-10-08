@@ -1,0 +1,21 @@
+{
+  "name": "colibrimo-tour",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Repo-wide JS/TS tooling (ESLint + Prettier). The viewer and mobile packages have their own package.json.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "eslint --max-warnings=0 .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.12.0",
+    "prettier": "3.9.9",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
+  }
+}

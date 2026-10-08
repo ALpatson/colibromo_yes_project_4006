@@ -1,0 +1,45 @@
+# Pre-commit hooks. Install once per clone:
+#   pip install pre-commit   (or use the project .venv, see README)
+#   npm install              (provides ESLint + Prettier for the JS/TS hooks)
+#   pre-commit install
+# Run on everything: pre-commit run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      # Room videos and splat files must never end up in Git (privacy + size).
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 26.10.0
+    hooks:
+      - id: black
+
+  # ESLint and Prettier run from the root node_modules (versions pinned in
+  # package.json / package-lock.json), so `npm install` is required first.
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        entry: npx --no-install eslint --max-warnings=0
+        language: system
+        files: \.(js|jsx|mjs|cjs|ts|tsx)$
+      - id: prettier
+        name: prettier
+        entry: npx --no-install prettier --write --ignore-unknown
+        language: system
+        files: \.(js|jsx|mjs|cjs|ts|tsx|json|css|scss|html)$

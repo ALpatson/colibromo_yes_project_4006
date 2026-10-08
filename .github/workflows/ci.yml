@@ -1,0 +1,103 @@
+# CI: lint everything, then run each package's unit tests.
+# Package jobs are no-ops until that package has code (they check for its
+# pyproject.toml / package.json and skip otherwise). Replace the skip logic
+# with real steps when a package is created.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (pre-commit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install JS tooling (ESLint, Prettier)
+        run: npm ci
+      - name: Install pre-commit
+        run: pip install pre-commit
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  pipeline:
+    name: Pipeline tests (CPU only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Test
+        run: |
+          if [ ! -f pipeline/pyproject.toml ]; then
+            echo "pipeline/ has no code yet (Step 1) - skipping."
+            exit 0
+          fi
+          pip install -e "pipeline[dev]"
+          pytest pipeline -m "not gpu"
+
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Test
+        run: |
+          if [ ! -f backend/pyproject.toml ]; then
+            echo "backend/ has no code yet (Step 5) - skipping."
+            exit 0
+          fi
+          pip install -e "backend[dev]"
+          pytest backend
+
+  viewer:
+    name: Viewer tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Test
+        run: |
+          if [ ! -f viewer/package.json ]; then
+            echo "viewer/ has no code yet (Step 4) - skipping."
+            exit 0
+          fi
+          cd viewer && npm ci && npm test
+
+  mobile:
+    name: Mobile tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Test
+        run: |
+          if [ ! -f mobile/package.json ]; then
+            echo "mobile/ has no code yet (Step 6) - skipping."
+            exit 0
+          fi
+          cd mobile && npm ci && npm test

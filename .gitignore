@@ -1,0 +1,73 @@
+# ---- Secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Local AI-assistant files (personal, never pushed) ----
+CLAUDE.md
+.claude/
+
+# ---- Local data: videos, frames, runs, storage (personal data, never commit) ----
+data/*
+!data/README.md
+*.mp4
+*.mov
+*.MOV
+*.ply
+*.spz
+*.ksplat
+*.splat
+*.ckpt
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.sqlite3
+
+# ---- Node / Vite ----
+node_modules/
+coverage/
+*.tsbuildinfo
+.vite/
+npm-debug.log*
+
+# ---- Expo / React Native ----
+.expo/
+.expo-shared/
+mobile/android/
+mobile/ios/
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+*.apk
+*.aab
+*.ipa
+
+# ---- Docker ----
+docker-compose.override.yml
+
+# ---- Pipeline outputs (Nerfstudio) ----
+outputs/
+runs/
+wandb/
+
+# ---- Editors / OS ----
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db

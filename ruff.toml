@@ -1,0 +1,11 @@
+# Repo-wide Ruff config. Black does the formatting; Ruff does the linting.
+# Line length matches Black's default (88).
+line-length = 88
+target-version = "py311"
+extend-exclude = ["data", ".venv"]
+
+[lint]
+# E/W: pycodestyle, F: pyflakes, I: import sorting, B: bugbear, UP: pyupgrade
+select = ["E", "W", "F", "I", "B", "UP"]
+# E501 (line too long) is left to Black.
+ignore = ["E501"]

@@ -1,0 +1,15 @@
+# Prettier only formats JS/TS/JSON/CSS/HTML (see .pre-commit-config.yaml).
+# Markdown and YAML are left as written.
+*.md
+*.yml
+*.yaml
+package-lock.json
+node_modules/
+dist/
+build/
+coverage/
+data/
+.venv/
+mobile/.expo/
+mobile/android/
+mobile/ios/
