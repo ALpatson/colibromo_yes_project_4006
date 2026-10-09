@@ -22,6 +22,7 @@ from pathlib import Path
 
 from colibrimo_pipeline.config import TrainConfig
 from colibrimo_pipeline.errors import StepError
+from colibrimo_pipeline.gsplat_compat import apply_gsplat_fixes
 from colibrimo_pipeline.steps.base import StepContext, StepResult
 from colibrimo_pipeline.utils.ply import read_vertex_count
 from colibrimo_pipeline.utils.proc import run_capture, run_tool
@@ -57,26 +58,6 @@ def gsplat_examples_dir(cfg: TrainConfig) -> Path:
             NAME, f"No simple_trainer.py in '{path}'. Is this gsplat's examples folder?"
         )
     return path
-
-
-def make_datasets_importable(examples_dir: Path) -> bool:
-    """Make gsplat's ``examples/datasets`` folder win over an installed ``datasets`` package.
-
-    gsplat v1.5.3 ships ``examples/datasets/`` without ``__init__.py``, so Python
-    treats it as a namespace package. If the unrelated HuggingFace ``datasets``
-    package is installed (it is on Google Colab), Python imports that instead and
-    ``from datasets.colmap import ...`` fails. An empty ``__init__.py`` turns the
-    folder into a regular package, found first because the script's folder is at
-    the front of ``sys.path``. Returns True if the file was created.
-    """
-    init_file = examples_dir / "datasets" / "__init__.py"
-    if init_file.parent.is_dir() and not init_file.exists():
-        init_file.write_text(
-            "# Added by colibrimo_pipeline: see steps/train.py make_datasets_importable\n",
-            encoding="utf-8",
-        )
-        return True
-    return False
 
 
 def build_train_command(
@@ -144,8 +125,8 @@ def run(ctx: StepContext) -> StepResult:
     cfg = ctx.config.train
     python = cfg.python or sys.executable
     examples_dir = gsplat_examples_dir(cfg)
-    if make_datasets_importable(examples_dir):
-        ctx.logger.info("Added datasets/__init__.py to gsplat's examples (import fix).")
+    for change in apply_gsplat_fixes(examples_dir, python):
+        ctx.logger.info("gsplat compatibility fix: %s", change)
 
     env_versions = gpu_env_versions(python)
     if not env_versions.get("cuda_available"):

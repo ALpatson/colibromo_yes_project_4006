@@ -75,7 +75,7 @@ Each entry: **Context** (why a decision was needed), **Decision**, **Consequence
 - On Google Colab (Python 3.13, PyTorch 2.11, CUDA 13.0), `pip install nerfstudio==1.1.5` downgrades `numpy` and `protobuf` (breaking Colab packages), and compiling gsplat 1.4.0 was killed (out of memory).
 - gsplat (the library splatfacto is built on) is actively maintained (commits in 2026-09). gsplat 1.5.3 compiled and rendered on Colab (with `MAX_JOBS=2`).
 
-**Decision:** train with gsplat v1.5.3's official `examples/simple_trainer.py` (`default` strategy = original 3DGS densification, same algorithm family as splatfacto). Its requirements are installed except the `numpy<2.0.0` pin (the COLMAP reader it uses, a pycolmap fork, has no numpy-2 incompatibilities; Colab ships numpy 2) and `fused-bilagrid` (only for an optional feature).
+**Decision:** train with gsplat v1.5.3's official `examples/simple_trainer.py` (`default` strategy = original 3DGS densification, same algorithm family as splatfacto). Its requirements are installed except the `numpy<2.0.0` pin (Colab ships numpy 2; downgrading breaks Colab packages) and `fused-bilagrid` (only for an optional feature). *Correction 2026-10-09:* the COLMAP reader it uses (a pycolmap fork) **does** have one numpy-2 incompatibility, missed in the first check; it is patched automatically, see D-009.
 
 **Consequences:**
 - No `ns-train` / `ns-export` / `ns-eval`. Export = the PLY gsplat writes; evaluation in Step 2 will use gsplat's eval mode (`--ckpt`) instead of `ns-eval`.
@@ -115,3 +115,17 @@ Each entry: **Context** (why a decision was needed), **Decision**, **Consequence
 **Decision:** presets live in `pipeline/colibrimo_pipeline/presets/` (package data). Custom presets can be any YAML file passed with `--preset path/to/file.yaml`.
 
 **Consequences:** none for users; the folder differs from the PRD's tree.
+
+---
+
+## D-009 · Automatic workarounds for gsplat v1.5.3's example trainer · 2026-10-09
+
+**Context:** the first Colab training runs failed before training started:
+1. `No module named 'datasets.colmap'`: gsplat's `examples/datasets/` has no `__init__.py`, so the HuggingFace `datasets` package preinstalled on Colab was imported instead.
+2. `OverflowError: Python integer -1 out of bounds for uint64`: the pycolmap fork pinned by gsplat v1.5.3 (`rmbrualla/pycolmap@cc7ea4b`) has `INVALID_POINT3D = np.uint64(-1)`, which numpy 2 rejects. (This is why gsplat pins `numpy<2`; gsplat's main branch has since moved to the official `pycolmap` and numpy 2, but there is no release with that yet.)
+
+**Decision:** `colibrimo_pipeline/gsplat_compat.py`, called by the `train` step, (1) adds an empty `examples/datasets/__init__.py` and (2) replaces that one line with `np.uint64(np.iinfo(np.uint64).max)` (same value and type). Both are idempotent and logged. Verified on 2026-10-09 by running gsplat v1.5.3's real COLMAP loader with numpy 2.4 on the room1 COLMAP model (108 images loaded, transform computed); regression tests in `pipeline/tests/test_gsplat_compat.py`.
+
+**Consequences:**
+- The pipeline edits files of a third-party checkout/package; acceptable for a pinned version, removable once gsplat releases the main-branch loader.
+- Known, not fixed: the same pycolmap fork reads binary files with native `struct` `'L'` (4 bytes on Windows, 8 on Linux), so gsplat v1.5.3 training cannot read COLMAP models on **Windows**. Irrelevant for now (training needs Linux + NVIDIA: Colab, Docker).

@@ -1,6 +1,3 @@
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -56,36 +53,6 @@ def test_examples_dir_from_environment(tmp_path, monkeypatch):
     (tmp_path / "simple_trainer.py").write_text("")
     monkeypatch.setenv("GSPLAT_EXAMPLES_DIR", str(tmp_path))
     assert train.gsplat_examples_dir(TrainConfig()) == tmp_path
-
-
-def test_gsplat_datasets_folder_wins_over_installed_datasets_package(tmp_path):
-    """Regression (Colab 2026-10-09): HuggingFace `datasets` shadowed gsplat's folder."""
-    examples = tmp_path / "examples"
-    (examples / "datasets").mkdir(parents=True)
-    (examples / "datasets" / "colmap.py").write_text("PARSER = 'gsplat'\n")
-    (examples / "trainer.py").write_text(
-        "from datasets.colmap import PARSER\nprint(PARSER)\n"
-    )
-    # An unrelated, installed "datasets" package (regular package) elsewhere on the path.
-    site = tmp_path / "site"
-    (site / "datasets").mkdir(parents=True)
-    (site / "datasets" / "__init__.py").write_text("")
-    env = {**os.environ, "PYTHONPATH": str(site)}
-
-    def run_trainer():
-        return subprocess.run(
-            [sys.executable, str(examples / "trainer.py")],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-
-    assert run_trainer().returncode != 0  # reproduces the Colab failure
-    assert train.make_datasets_importable(examples) is True
-    fixed = run_trainer()
-    assert fixed.returncode == 0, fixed.stderr
-    assert fixed.stdout.strip() == "gsplat"
-    assert train.make_datasets_importable(examples) is False  # idempotent
 
 
 @pytest.mark.gpu
