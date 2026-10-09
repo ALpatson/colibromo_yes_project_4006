@@ -44,12 +44,10 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+      - name: Install FFmpeg (for the tests marked "tools")
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Test
         run: |
-          if [ ! -f pipeline/pyproject.toml ]; then
-            echo "pipeline/ has no code yet (Step 1) - skipping."
-            exit 0
-          fi
           pip install -e "pipeline[dev]"
           pytest pipeline -m "not gpu"
 

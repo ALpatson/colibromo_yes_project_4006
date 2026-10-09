@@ -9,3 +9,8 @@ extend-exclude = ["data", ".venv"]
 select = ["E", "W", "F", "I", "B", "UP"]
 # E501 (line too long) is left to Black.
 ignore = ["E501"]
+
+[lint.isort]
+# Our own packages, so imports are grouped as first-party (Ruff can't infer this
+# when run from the repo root).
+known-first-party = ["colibrimo_pipeline"]

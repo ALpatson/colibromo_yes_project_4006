@@ -7,14 +7,14 @@ Student project **JUNIA YES 26-27-R-4006** for the client Colibrimo (2026-10-05 
 **Current scope: Stage 1** (capture → 3D reconstruction → mobile viewer). No renovation generation yet.
 The full requirements are in [PRD-colibrimo-stage1.md](PRD-colibrimo-stage1.md) (living document).
 
-> **Status:** Step 0 (repo and tooling) done. Packages are still empty placeholders. See [CHANGELOG.md](CHANGELOG.md).
+> **Status:** Step 0 (repo and tooling) done. Step 1 (reconstruction pipeline, [docs/pipeline.md](docs/pipeline.md)) in progress. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 
 ```
 ┌────────────────────┐  upload video   ┌───────────────────────┐  enqueue job  ┌──────────────────────────┐
 │ Mobile app         │ ──────────────▶ │ Backend API            │ ────────────▶ │ GPU worker               │
-│ (React Native/Expo)│                 │ (Django + DRF)         │               │ (Celery + Nerfstudio)    │
+│ (React Native/Expo)│                 │ (Django + DRF)         │               │ (Celery + gsplat)        │
 │ - capture guide    │ ◀────────────── │ - scenes, jobs, files  │ ◀──────────── │ frames → COLMAP → train  │
 │ - job status       │  status / URLs  │ - PostgreSQL           │  status/logs  │ → export → clean →       │
 │ - WebView viewer   │                 │ - Redis (queue)        │               │ compress → metrics       │
@@ -33,7 +33,7 @@ More detail: [docs/architecture.md](docs/architecture.md). Technical choices and
 
 | Folder | What | Built in |
 |---|---|---|
-| [pipeline/](pipeline/) | GPU reconstruction pipeline (Python CLI + library, Nerfstudio) | Steps 1–3 |
+| [pipeline/](pipeline/) | Reconstruction pipeline `cpipe` (Python CLI + library: FFmpeg, COLMAP, gsplat). Guide: [docs/pipeline.md](docs/pipeline.md) | Steps 1–3 |
 | [backend/](backend/) | Django + DRF API, Celery jobs | Step 5 |
 | [viewer/](viewer/) | Web viewer (Vite + TypeScript + three.js + Spark) | Step 4 |
 | [mobile/](mobile/) | Expo React Native app | Step 6 |
@@ -82,6 +82,8 @@ npm install            # ESLint + Prettier, pinned in package.json
 pre-commit install     # run hooks automatically on `git commit`
 pre-commit run --all-files
 ```
+
+Windows: if `activate` fails with "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, then try again.
 
 Tip: pre-commit caches its hook environments in `~/.cache/pre-commit` (on Windows that's on `C:`). To keep the cache on another drive, set `PRE_COMMIT_HOME`, for example `setx PRE_COMMIT_HOME D:\Colibromo_yes_prooject_4006\.venv\pre-commit-cache`.
 

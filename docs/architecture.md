@@ -8,7 +8,7 @@ See the overview diagram in the [root README](../README.md#architecture) and PRD
 
 | Component | Folder | Status |
 |---|---|---|
-| Reconstruction pipeline (CLI + library) | `pipeline/` | not started (Step 1) |
+| Reconstruction pipeline (CLI + library) | `pipeline/` | Step 1 in progress, see [pipeline.md](pipeline.md) |
 | Backend API + Celery jobs | `backend/` | not started (Step 5) |
 | Web viewer | `viewer/` | not started (Step 4) |
 | Mobile app | `mobile/` | not started (Step 6) |

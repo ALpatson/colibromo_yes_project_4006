@@ -1,0 +1,7 @@
+# fast: quick check that a capture works. Lower quality, shortest run.
+# Only values that differ from the defaults in config.py are listed.
+frames:
+  target_count: 150
+  max_long_side: 1280
+train:
+  max_steps: 7000

@@ -1,29 +1,26 @@
-# pipeline/: GPU reconstruction pipeline
+# pipeline/: reconstruction pipeline (`cpipe`)
 
-> Placeholder (Step 0). Implemented in **Step 1** (CLI), **Step 2** (evaluation), **Step 3** (post-processing + compression).
-
-Turns a phone video of a room into a Gaussian Splatting scene: FFmpeg frames → COLMAP poses (`ns-process-data`) → Nerfstudio `splatfacto` training → export → cleanup → compression → metrics.
-
-Planned usage (PRD R1.1):
+Phone video of a room → frames (FFmpeg) → camera poses (COLMAP) → Gaussian Splatting training
+(gsplat, NVIDIA GPU) → `scene.ply`, with a `manifest.json` recording everything about the run.
 
 ```bash
+pip install -e "pipeline[dev]"
 cpipe run --video data/videos/room1.mp4 --output data/runs/room1 --preset balanced
+cpipe run --video data/videos/room1.mp4 --output data/runs/room1 --until poses   # no GPU
+pytest pipeline
 ```
 
-Planned layout (PRD §6):
+Full guide (install, laptop + Colab workflow, presets, outputs, Docker, troubleshooting):
+**[docs/pipeline.md](../docs/pipeline.md)**.
 
-```
-pipeline/
-├── Dockerfile               # CUDA base image + Nerfstudio + COLMAP + FFmpeg
-├── pyproject.toml
-├── colibrimo_pipeline/
-│   ├── cli.py               # `cpipe` entry point
-│   ├── config.py            # pydantic config + YAML presets
-│   ├── steps/               # extract_frames, poses, train, export, postprocess, compress, evaluate
-│   ├── manifest.py          # run manifest
-│   └── utils/
-├── presets/                 # fast.yaml, balanced.yaml, quality.yaml
-└── tests/
-```
-
-Requires a Linux machine with an NVIDIA GPU for training (not the Windows dev laptops).
+| Path | Content |
+|---|---|
+| `colibrimo_pipeline/cli.py` | `cpipe` command line |
+| `colibrimo_pipeline/pipeline.py` | `run_pipeline()`: step order, resumability, manifest, logs |
+| `colibrimo_pipeline/config.py` | typed settings (pydantic) |
+| `colibrimo_pipeline/presets/` | `fast`, `balanced`, `quality` |
+| `colibrimo_pipeline/steps/` | `validate`, `extract_frames`, `poses`, `train`, `export` |
+| `colibrimo_pipeline/manifest.py` | `manifest.json` |
+| `notebooks/colab_run.ipynb` | run on a free Google Colab GPU |
+| `Dockerfile` | GPU image (not tested yet) |
+| `tests/` | pytest (CPU; FFmpeg tests skip if FFmpeg is missing) |

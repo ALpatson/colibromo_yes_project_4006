@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "colibrimo-pipeline"
+version = "0.1.0"
+description = "Phone video of a room -> 3D Gaussian Splatting scene (Colibrimo Stage 1)."
+readme = "README.md"
+requires-python = ">=3.11"
+# Kept small on purpose: these run on CPU-only laptops. GPU training dependencies
+# (torch, gsplat and gsplat's example requirements) are installed separately on
+# the GPU machine, see docs/pipeline.md.
+dependencies = [
+  "numpy>=1.26",
+  "pillow>=10",
+  "pydantic>=2.6",
+  "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+cpipe = "colibrimo_pipeline.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["colibrimo_pipeline*"]
+
+[tool.setuptools.package-data]
+colibrimo_pipeline = ["presets/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "gpu: needs an NVIDIA GPU with CUDA (skipped automatically otherwise)",
+  "tools: needs FFmpeg/ffprobe (and COLMAP for some tests) on PATH (skipped otherwise)",
+]

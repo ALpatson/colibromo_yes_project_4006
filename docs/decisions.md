@@ -65,3 +65,53 @@ Each entry: **Context** (why a decision was needed), **Decision**, **Consequence
 **Decision:** ESLint and Prettier are pinned in a private root `package.json` (+ lockfile). The pre-commit hooks call them via `npx --no-install` (`language: system`). Developers run `npm install` once at the root.
 
 **Consequences:** one extra setup command; editor and pre-commit use the same versions. Prettier formats only JS/TS/JSON/CSS/HTML; Markdown and YAML are left as written (so the PRD isn't reformatted).
+
+---
+
+## D-005 · Train with gsplat's `simple_trainer.py` instead of Nerfstudio `splatfacto` · 2026-10-08
+
+**Context:** PRD §5 specifies Nerfstudio `splatfacto`. Checks on 2026-10-08:
+- Nerfstudio is dormant: last release v1.1.5 (2024-11), last commit 2025-07. It pins `gsplat==1.4.0`.
+- On Google Colab (Python 3.13, PyTorch 2.11, CUDA 13.0), `pip install nerfstudio==1.1.5` downgrades `numpy` and `protobuf` (breaking Colab packages), and compiling gsplat 1.4.0 was killed (out of memory).
+- gsplat (the library splatfacto is built on) is actively maintained (commits in 2026-09). gsplat 1.5.3 compiled and rendered on Colab (with `MAX_JOBS=2`).
+
+**Decision:** train with gsplat v1.5.3's official `examples/simple_trainer.py` (`default` strategy = original 3DGS densification, same algorithm family as splatfacto). Its requirements are installed except the `numpy<2.0.0` pin (the COLMAP reader it uses, a pycolmap fork, has no numpy-2 incompatibilities; Colab ships numpy 2) and `fused-bilagrid` (only for an optional feature).
+
+**Consequences:**
+- No `ns-train` / `ns-export` / `ns-eval`. Export = the PLY gsplat writes; evaluation in Step 2 will use gsplat's eval mode (`--ckpt`) instead of `ns-eval`.
+- gsplat normalises the scene (`normalize_world_space`); we recompute that 4x4 transform with gsplat's own parser and store it in the manifest (needed for future "after" variants).
+- The training script is not part of the gsplat wheel: the GPU machine needs a gsplat checkout (`GSPLAT_EXAMPLES_DIR`).
+- If gsplat changes its example script, pin/adjust the version in one place (notebook + Dockerfile).
+
+---
+
+## D-006 · Call COLMAP directly instead of `ns-process-data` · 2026-10-08
+
+**Context:** PRD R1.2 suggests COLMAP through Nerfstudio's `ns-process-data`. With D-005 Nerfstudio is not installed, and installing it (with PyTorch) on CPU laptops just to run COLMAP would cost several GB.
+
+**Decision:** run `colmap feature_extractor`, `sequential_matcher` (video frames are ordered; exhaustive matching is optional) and `mapper` from the pipeline. Frames are extracted by our own FFmpeg step (blur filtering, downscaling), not by COLMAP.
+
+**Consequences:** COLMAP renamed options between 3.x and 4.x (`SiftExtraction.use_gpu` became `FeatureExtraction.use_gpu`), so the pipeline reads `colmap <command> --help` and uses whichever name exists. Verified with COLMAP 4.2.1 (Windows); Colab/Docker use Ubuntu 24.04's packaged COLMAP. The output layout (`images/`, `sparse/0/`) is what gsplat reads.
+
+---
+
+## D-007 · Google Colab as the GPU until a GPU machine is chosen · 2026-10-08
+
+**Context:** no Linux + NVIDIA machine yet (PRD §11 Q1); the team laptop has an AMD Radeon 760M (no CUDA), so training cannot run locally.
+
+**Decision:** CPU steps (validate, frames, COLMAP) run anywhere, `--until poses` on laptops. Training runs on Google Colab's free T4 GPU through `pipeline/notebooks/colab_run.ipynb`. gsplat and fused-ssim have no prebuilt wheels for Colab's Python 3.13 / PyTorch 2.11, so the notebook compiles them once and caches the wheels on the user's Google Drive.
+
+**Consequences:**
+- Videos must be on Google Drive: only the team's own test rooms until Colibrimo approves (privacy, PRD §9).
+- Free Colab sessions can disconnect; timings on a T4 will not match the PRD's 45 min target GPU.
+- The Dockerfile (R1.8) is written for a future GPU machine but **untested**.
+
+---
+
+## D-008 · Presets ship inside the Python package · 2026-10-08
+
+**Context:** PRD §6 shows `pipeline/presets/`. Presets must be available when the pipeline is installed with `pip install git+...` (Colab, Docker), where only the package is installed.
+
+**Decision:** presets live in `pipeline/colibrimo_pipeline/presets/` (package data). Custom presets can be any YAML file passed with `--preset path/to/file.yaml`.
+
+**Consequences:** none for users; the folder differs from the PRD's tree.

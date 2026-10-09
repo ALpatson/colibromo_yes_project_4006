@@ -1,0 +1,7 @@
+# balanced: default preset for real rooms.
+# Only values that differ from the defaults in config.py are listed.
+frames:
+  target_count: 300
+  max_long_side: 1600
+train:
+  max_steps: 30000
