@@ -183,4 +183,5 @@ other things, that a 5 s video fails at `validate` and a static shot fails at `e
 | `COLMAP placed only X of Y frames` | Capture problem (fast motion, blur, mirrors, low light, turning on the spot). Try `--set poses.matcher=exhaustive` (slower) or re-film. |
 | `Training needs an NVIDIA GPU with CUDA` | Run `--until poses` here and train on Colab. |
 | `gsplat's examples folder is not configured` | Set `GSPLAT_EXAMPLES_DIR` to `<gsplat checkout>/examples`. |
+| `No module named 'datasets.colmap'` | Fixed in the pipeline: gsplat's `examples/datasets` folder was shadowed by the HuggingFace `datasets` package (installed on Colab). The `train` step now adds `datasets/__init__.py`. |
 | Colab: compile killed (exit 137) | Out of RAM; keep `MAX_JOBS=2` (set by the notebook). |

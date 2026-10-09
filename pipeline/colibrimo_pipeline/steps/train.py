@@ -59,6 +59,26 @@ def gsplat_examples_dir(cfg: TrainConfig) -> Path:
     return path
 
 
+def make_datasets_importable(examples_dir: Path) -> bool:
+    """Make gsplat's ``examples/datasets`` folder win over an installed ``datasets`` package.
+
+    gsplat v1.5.3 ships ``examples/datasets/`` without ``__init__.py``, so Python
+    treats it as a namespace package. If the unrelated HuggingFace ``datasets``
+    package is installed (it is on Google Colab), Python imports that instead and
+    ``from datasets.colmap import ...`` fails. An empty ``__init__.py`` turns the
+    folder into a regular package, found first because the script's folder is at
+    the front of ``sys.path``. Returns True if the file was created.
+    """
+    init_file = examples_dir / "datasets" / "__init__.py"
+    if init_file.parent.is_dir() and not init_file.exists():
+        init_file.write_text(
+            "# Added by colibrimo_pipeline: see steps/train.py make_datasets_importable\n",
+            encoding="utf-8",
+        )
+        return True
+    return False
+
+
 def build_train_command(
     python: str, examples_dir: Path, data_dir: Path, result_dir: Path, cfg: TrainConfig
 ) -> list[str]:
@@ -124,6 +144,8 @@ def run(ctx: StepContext) -> StepResult:
     cfg = ctx.config.train
     python = cfg.python or sys.executable
     examples_dir = gsplat_examples_dir(cfg)
+    if make_datasets_importable(examples_dir):
+        ctx.logger.info("Added datasets/__init__.py to gsplat's examples (import fix).")
 
     env_versions = gpu_env_versions(python)
     if not env_versions.get("cuda_available"):
