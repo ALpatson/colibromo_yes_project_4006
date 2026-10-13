@@ -15,7 +15,10 @@ video(s) ──validate──▶ extract_frames ──▶ poses ──▶ train 
 | `extract_frames` | Shares the target frame count between the videos by duration. Per video: extracts 2x its share with FFmpeg, keeps the sharpest frame of each group, downscales. Fails if a video looks static. | any machine |
 | `poses` | COLMAP: feature extraction, matching (sequential for one video, sequential + loop detection for several), mapper. Keeps the largest model (others go to `colmap/unused_models/`). Fails if fewer than 70% of frames are registered. | any machine (CPU, or GPU with a CUDA build) |
 | `train` | `train.trainer: gsplat` (default): gsplat `simple_trainer.py` (headless, seed 42). `train.trainer: brush`: Brush (headless, seed 42). | gsplat: **Linux + NVIDIA GPU**; Brush: **any GPU, Windows too** |
-| `export` | Copies the trained splat to `scene.ply`, records the scene transform in the manifest. | any machine |
+| `export` | Copies the trained splat to `scene.ply`, writes `cameras.json` (camera poses for the viewer), records the scene transform in the manifest. | any machine |
+
+How to film a room (three heights, slow turns, locked exposure, nobody moving):
+[capture-guide.md](capture-guide.md).
 
 ## Where to run it
 
@@ -182,6 +185,7 @@ from colibrimo_pipeline import load_config, run_pipeline, StepError
 config = load_config("balanced", {"train": {"max_steps": 20000}})
 try:
     manifest = run_pipeline("room1.mp4", "data/runs/room1", config)
+    # several videos of one room: run_pipeline(["bottom.mp4", "middle.mp4", "up.mp4"], ...)
 except StepError as exc:
     print(exc.step, exc.message)
 ```
@@ -299,6 +303,16 @@ pytest pipeline            # from the repo root
 Tests that need FFmpeg (marker `tools`) are skipped if FFmpeg is missing; GPU tests (marker
 `gpu`) are skipped without CUDA. The FFmpeg tests generate synthetic videos and check, among
 other things, that a 5 s video fails at `validate` and a static shot fails at `extract_frames`.
+
+| Test file | Covers |
+|---|---|
+| `test_multi_video.py`, `test_end_to_end_cpu.py` | several videos: names, frame split by duration, per-video naming and `frames.json`, duration rules, matcher choice, `--videos` folder |
+| `test_hdr.py` | HDR detection (HLG/PQ/SDR), the tone-mapping filter chain, a real FFmpeg run on a synthetic HLG clip (skipped without libx264/zscale), missing zscale |
+| `test_brush.py` | Brush command line (v0.3.0 flags), GPU adapter/progress parsing, moving unused COLMAP models (incl. old layout), the coordinate check, PLY/points readers |
+| `test_cameras.py` | `cameras.json`: COLMAP readers, quaternions, identity and gsplat transforms |
+
+Not covered by automated tests (needs the real tools; checked by hand on myRoom2, see
+decisions D-011 to D-015): a full COLMAP run, Brush training, gsplat training.
 
 ## Troubleshooting
 

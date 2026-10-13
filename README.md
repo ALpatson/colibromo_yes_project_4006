@@ -33,7 +33,7 @@ More detail: [docs/architecture.md](docs/architecture.md). Technical choices and
 
 | Folder | What | Built in |
 |---|---|---|
-| [pipeline/](pipeline/) | Reconstruction pipeline `cpipe` (Python CLI + library: FFmpeg, COLMAP, gsplat). Guide: [docs/pipeline.md](docs/pipeline.md) | Steps 1–3 |
+| [pipeline/](pipeline/) | Reconstruction pipeline `cpipe` (Python CLI + library: FFmpeg, COLMAP, gsplat or Brush; one or several videos per room). Guide: [docs/pipeline.md](docs/pipeline.md), filming: [docs/capture-guide.md](docs/capture-guide.md) | Steps 1–3 |
 | [backend/](backend/) | Django + DRF API, Celery jobs | Step 5 |
 | [viewer/](viewer/) | Web viewer (Vite + TypeScript + three.js + Spark) | Step 4 |
 | [mobile/](mobile/) | Expo React Native app | Step 6 |

@@ -1,13 +1,15 @@
 # pipeline/: reconstruction pipeline (`cpipe`)
 
-Phone video(s) of a room → frames (FFmpeg) → camera poses (COLMAP) → Gaussian Splatting training
-(gsplat, NVIDIA GPU) → `scene.ply`, with a `manifest.json` recording everything about the run.
+Phone video(s) of a room → frames (FFmpeg, HDR tone-mapped) → camera poses (COLMAP) → Gaussian
+Splatting training (gsplat on Linux + NVIDIA, or Brush on any GPU incl. Windows) → `scene.ply` +
+`cameras.json`, with a `manifest.json` recording everything about the run.
 
 ```bash
 pip install -e "pipeline[dev]"
 cpipe run --video data/videos/room1.mp4 --output data/runs/room1 --preset balanced
 cpipe run --video data/videos/room1.mp4 --output data/runs/room1 --until poses   # no GPU
 cpipe run --video bottom.mp4 --video middle.mp4 --video up.mp4 --output data/runs/room2  # several videos
+cpipe run --videos data/videos/room2 --output data/runs/room2 --set train.trainer=brush # train with Brush
 pytest pipeline
 ```
 
