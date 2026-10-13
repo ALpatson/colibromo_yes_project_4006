@@ -16,9 +16,9 @@ NAME = "export"
 
 TRANSFORM_DESCRIPTION = (
     "4x4 matrix (row-major) mapping COLMAP world coordinates to the coordinates "
-    "of scene.ply: x_scene = matrix_4x4 @ [x, y, z, 1]. Applied by gsplat's "
-    "normalize_world_space (recentre, rotate, rescale). Needed to align future "
-    "'after' variants with this 'before' scene."
+    "of scene.ply: x_scene = matrix_4x4 @ [x, y, z, 1]. Applied by the trainer: "
+    "gsplat's normalize_world_space (recentre, rotate, rescale), or the identity "
+    "for Brush. Needed to align future 'after' variants with this 'before' scene."
 )
 
 

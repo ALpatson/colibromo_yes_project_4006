@@ -25,12 +25,15 @@ TOOL_ENV_VARS = {
     "ffmpeg": "CPIPE_FFMPEG",
     "ffprobe": "CPIPE_FFPROBE",
     "colmap": "CPIPE_COLMAP",
+    "brush_app": "CPIPE_BRUSH",
 }
 
 INSTALL_HINTS = {
     "ffmpeg": "Install FFmpeg (https://ffmpeg.org/download.html) and add it to PATH.",
     "ffprobe": "ffprobe ships with FFmpeg (https://ffmpeg.org/download.html).",
     "colmap": "Install COLMAP (https://colmap.github.io/install.html) and add it to PATH.",
+    "brush_app": "Download Brush (https://github.com/ArthurBrussee/brush/releases) "
+    "and add it to PATH, or set train.brush_exe.",
 }
 
 _LINE_SPLIT = re.compile(rb"[\r\n]")
@@ -85,12 +88,14 @@ def run_tool(
     env: dict[str, str] | None = None,
     heartbeat_s: float = 30.0,
     tail_lines: int = 25,
+    on_line=None,
 ) -> list[str]:
     """Run ``cmd``, log its output, and raise StepError if it fails.
 
     Every output line goes to the log files (DEBUG level). Progress bars that
     redraw with carriage returns are split into separate lines too. Returns the
-    last ``tail_lines`` lines of output.
+    last ``tail_lines`` lines of output. ``on_line`` (optional) is called with
+    every output line, e.g. to pick out a value the tool prints.
     """
     cmd = [str(c) for c in cmd]
     logger.info("Running: %s", format_command(cmd))
@@ -120,6 +125,8 @@ def run_tool(
             logger.debug("%s", line)
             tail.append(line)
             latest = line
+            if on_line is not None:
+                on_line(line)
 
     assert proc.stdout is not None
     for chunk in iter(lambda: proc.stdout.read(4096), b""):

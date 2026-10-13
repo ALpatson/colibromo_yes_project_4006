@@ -174,7 +174,7 @@ Option names checked with COLMAP 4.2.1's `sequential_matcher --help` (`Sequentia
 
 Both connect all three heights in one model. (Exhaustive wall-clock time was longer because the laptop slept for about an hour; the table excludes that pause.)
 
-**Consequences:** multi-video runs need internet the first time (vocabulary tree download).
+**Consequences:** multi-video runs need internet the first time (vocabulary tree download). For comparison, COLMAP's own `automatic_reconstructor` (data type video, ~255 frames) took about 3 min on the same videos; it uses its own extraction/matching settings, which were not compared in detail. If `poses` stays the bottleneck, that comparison is the next thing to look at.
 
 ---
 
@@ -191,4 +191,33 @@ Both connect all three heights in one model. (Exhaustive wall-clock time was lon
 
 **Verified (2026-10-13, FFmpeg 9.0.2 gyan.dev full build):** `room1.MOV` (iPhone 16, HLG, portrait) is detected as HDR; 12 frames extracted with and without tone-mapping. Tone-mapped frames have normal colours (red door, wood tables, white walls; mean saturation 68 vs 41, darker blacks: 1st percentile 14.5 vs 24.6). Portrait rotation is still applied (720x1280). A synthetic HLG-tagged clip covers this in the tests (skipped if FFmpeg lacks libx264 or zscale).
 
-**Consequences:** the setting is a boolean on purpose: YAML reads `off` as `false`, so an `auto`/`off` choice broke `--set frames.hdr_tonemap=off`. Tone-mapped colours are an approximation of what the phone shows (hable keeps highlights soft; white walls come out very slightly warm); `frames.tonemap=mobius` is an alternative if colours look off. For comparison, COLMAP's own `automatic_reconstructor` (data type video, ~255 frames) took about 3 min on the same videos; it uses its own extraction/matching settings, which were not compared in detail. If `poses` stays the bottleneck, that comparison is the next thing to look at.
+**Consequences:** the setting is a boolean on purpose: YAML reads `off` as `false`, so an `auto`/`off` choice broke `--set frames.hdr_tonemap=off`. Tone-mapped colours are an approximation of what the phone shows (hable keeps highlights soft; white walls come out very slightly warm); `frames.tonemap=mobius` is an alternative if colours look off.
+
+---
+
+## D-013 · Brush as a second trainer (`train.trainer: brush`) · 2026-10-13
+
+**Context:** gsplat training needs Linux + an NVIDIA GPU with CUDA (D-005, D-007), so the team trains on Colab. Brush (https://github.com/ArthurBrussee/brush) trains Gaussian Splats through wgpu/Vulkan on NVIDIA, AMD and Intel GPUs, on Windows too; it already produced the team's best room (myRoom2) by hand on a laptop with an NVIDIA T500 4 GB.
+
+**Decision:**
+- `train.trainer: gsplat | brush` (default `gsplat`, unchanged). Brush is found through `train.brush_exe`, then `CPIPE_BRUSH`, then `brush_app` on PATH.
+- Flags checked with `brush_app.exe --help` (v0.3.0, prints `brush-cli 0.3.0`): the dataset folder (`colmap/`, with `images/` + `sparse/0/`) is a **positional argument** (there is no `train` subcommand); `--total-steps`, `--sh-degree`, `--max-resolution` (default: `frames.max_long_side`, i.e. no further downscaling), `--max-splats` (new `train.max_splats`), `--seed 42`, and `--export-every <total-steps> --export-path train/ --export-name export_{iter}.ply` so only the final splat is written (`{iter}` is replaced by Brush, verified: `export_100.ply`). No `--with-viewer`, so it runs headless.
+- `RUST_LOG=info` is set so Brush logs the GPU it uses (`cubecl_wgpu::runtime Using adapter AdapterInfo { name: ..., device_type: ..., backend: ... }`); the pipeline records it in the manifest (`steps.train.info.gpu`) and warns if it is not a discrete GPU.
+- Brush trains on all frames (`test_every` only applies to gsplat).
+- **Scene transform:** Brush does not normalise the scene: its PLY stays in COLMAP's coordinates (seen in the viewer prototype: COLMAP camera positions sit inside the Brush splat). This is **checked on every run**: COLMAP's sparse points lie on the room's surfaces, where the splat has its Gaussians, so in the same coordinates each COLMAP point has a splat right next to it. The check samples 1,000 COLMAP points and 50,000 splats (fixed seed, < 1 s) and requires the median nearest-splat distance to be below 1.5% of the scene size (median interquartile range of the COLMAP points). If it passes, `train/transform.json` and the manifest record the identity matrix with the check's numbers; if not, the step stops rather than record a wrong transform.
+  A first version compared per-axis medians/spreads of both point sets; on myRoom2 one spread ratio came out at 1.50 (limit 1.6) because splats fill walls more evenly than sparse points, too close to the limit to trust, so it was replaced before being pushed.
+- Brush is started in a persistent working folder (`~/.cache/colibrimo-pipeline/brush`) because it writes its GPU kernel-tuning cache (`target/autotune`) there; the PLY goes to `train/` through `--export-path`.
+
+**Measured (2026-10-13, myRoom2 exhaustive run: 3 videos, 300 frames; Brush v0.3.0, `max_splats` 1,000,000, `max_resolution` 1280, SH degree 3, 30,000 steps):** Brush used the **NVIDIA T500** (`DiscreteGpu`, Vulkan) after setting `brush_app.exe` to High performance. Training took **58 min 50 s**; growth stopped at step 15,000 with **282,405 splats** (well under the 1,000,000 cap); `scene.ply` is **66.6 MB**. Coordinate check: median nearest-splat distance 0.0072 x scene size (threshold 0.015); the same splat moved by 10% of the scene size gives 0.064, rotated by 10 degrees 0.029.
+
+**Consequences:** the team laptop can run the whole pipeline locally (no Colab needed for Brush). On laptops with two GPUs, Windows may give Brush the integrated one; set `brush_app.exe` to "High performance" in Windows Settings > System > Display > Graphics (the pipeline warns when this happens). gsplat stays the default for Linux GPU machines and Docker.
+
+---
+
+## D-014 · Unused COLMAP models leave `colmap/sparse/` · 2026-10-13
+
+**Context:** COLMAP's mapper can split a capture into several models. The pipeline kept the largest as `sparse/0` and renamed the others `sparse/unused_N`. gsplat reads `sparse/0` explicitly, but **Brush loaded a small leftover model** instead of the real one when others were still inside the folder (manual test).
+
+**Decision:** `poses` keeps only the largest model in `sparse/` (as `0`) and moves the others to `colmap/unused_models/model_N` (kept for debugging; cleared when `poses` re-runs). `train` with Brush also moves anything other than `0` out of `sparse/` before training, so run folders made before this change work too (idempotent, never overwrites).
+
+**Consequences:** `colmap/sparse/` always contains exactly one model; `poses.info.other_model_sizes` still lists the other models' sizes.

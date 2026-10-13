@@ -131,16 +131,40 @@ class PosesConfig(_Section):
 
 
 class TrainConfig(_Section):
-    """Gaussian Splatting training with gsplat (step ``train``)."""
+    """Gaussian Splatting training (step ``train``) with gsplat or Brush."""
 
-    trainer: Literal["gsplat"] = "gsplat"
+    trainer: Literal["gsplat", "brush"] = Field(
+        "gsplat",
+        description="gsplat: NVIDIA GPU + Linux (Colab, Docker). brush: Brush app, "
+        "runs on Windows/Linux/macOS with any GPU (NVIDIA, AMD, Intel).",
+    )
     max_steps: int = Field(30_000, ge=100)
     strategy: Literal["default", "mcmc"] = Field(
-        "default", description="gsplat densification strategy."
+        "default", description="gsplat densification strategy (gsplat only)."
     )
     sh_degree: int = Field(3, ge=0, le=3, description="Spherical harmonics degree.")
     test_every: int = Field(
-        8, ge=1, description="Every Nth frame is held out for evaluation."
+        8,
+        ge=1,
+        description="gsplat only: every Nth frame is held out for evaluation. "
+        "Brush trains on all frames.",
+    )
+    brush_exe: str | None = Field(
+        None,
+        description="Brush executable (brush_app). Defaults to the CPIPE_BRUSH "
+        "environment variable, then brush_app on PATH.",
+    )
+    max_splats: int | None = Field(
+        None,
+        ge=1000,
+        description="Brush only: upper bound on the number of splats (Brush's "
+        "default is 10,000,000; ~1,000,000 fits a 4 GB GPU).",
+    )
+    max_resolution: int | None = Field(
+        None,
+        ge=64,
+        description="Brush only: longest image side used for training. Default: "
+        "frames.max_long_side (no further downscaling).",
     )
     gsplat_examples_dir: str | None = Field(
         None,
@@ -151,7 +175,8 @@ class TrainConfig(_Section):
         None, description="Python used to run the trainer (default: the current one)."
     )
     extra_args: list[str] = Field(
-        default_factory=list, description="Extra simple_trainer.py arguments."
+        default_factory=list,
+        description="Extra arguments for the trainer (simple_trainer.py or brush_app).",
     )
 
 

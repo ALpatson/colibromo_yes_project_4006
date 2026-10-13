@@ -1,20 +1,20 @@
 # Reconstruction pipeline (`cpipe`)
 
 Turns one or more phone videos of one room into a 3D Gaussian Splatting scene (`scene.ply`).
-Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-012).
+Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-014).
 
 ```
 video(s) ──validate──▶ extract_frames ──▶ poses ──▶ train ──▶ export ──▶ scene.ply
-           (ffprobe)     (FFmpeg)        (COLMAP)   (gsplat,    (copy +
-                                                     NVIDIA GPU)  transform)
+           (ffprobe)     (FFmpeg)        (COLMAP)   (gsplat or   (copy +
+                                                     Brush)       transform)
 ```
 
 | Step | What it does | Runs on |
 |---|---|---|
 | `validate` | Reads each video with ffprobe. Fails if all videos together are shorter than 20 s or one video is longer than 5 min; warns below 1080p. | any machine |
 | `extract_frames` | Shares the target frame count between the videos by duration. Per video: extracts 2x its share with FFmpeg, keeps the sharpest frame of each group, downscales. Fails if a video looks static. | any machine |
-| `poses` | COLMAP: feature extraction, matching (sequential for one video, exhaustive or loop detection for several), mapper. Keeps the largest model. Fails if fewer than 70% of frames are registered. | any machine (CPU, or GPU with a CUDA build) |
-| `train` | gsplat `simple_trainer.py` (headless, seed 42). | **NVIDIA GPU only** |
+| `poses` | COLMAP: feature extraction, matching (sequential for one video, sequential + loop detection for several), mapper. Keeps the largest model (others go to `colmap/unused_models/`). Fails if fewer than 70% of frames are registered. | any machine (CPU, or GPU with a CUDA build) |
+| `train` | `train.trainer: gsplat` (default): gsplat `simple_trainer.py` (headless, seed 42). `train.trainer: brush`: Brush (headless, seed 42). | gsplat: **Linux + NVIDIA GPU**; Brush: **any GPU, Windows too** |
 | `export` | Copies the trained splat to `scene.ply`, records the scene transform in the manifest. | any machine |
 
 ## Where to run it
@@ -28,6 +28,9 @@ We have no GPU machine yet (PRD §11 Q1), so the normal workflow is:
 
 Or run everything on Colab with the notebook (simplest, slower poses). Completed steps are
 skipped automatically, so a run folder can move between machines.
+
+**Or everything on the laptop with Brush** (any GPU; see [Training with Brush](#training-with-brush)):
+`cpipe run ... --set train.trainer=brush`.
 
 ## Install on a laptop (Windows, CPU steps)
 
@@ -58,6 +61,44 @@ skipped automatically, so a run folder can move between machines.
    ```
 
 On Linux/macOS: install `ffmpeg` and `colmap` with your package manager, then step 4.
+
+## Training with Brush
+
+[Brush](https://github.com/ArthurBrussee/brush) trains on NVIDIA, AMD and Intel GPUs, on
+Windows too, so the laptop can run the whole pipeline (decision D-013).
+
+1. Download a release (tested: v0.3.0, `brush-app-x86_64-pc-windows-msvc`) and unzip it.
+2. Tell the pipeline where `brush_app.exe` is (or add it to PATH, or set `train.brush_exe`):
+   ```powershell
+   $env:CPIPE_BRUSH = "C:\Users\JOSEPHINE\Downloads\brush-app-x86_64-pc-windows-msvc\brush_app.exe"
+   ```
+3. **Laptops with two GPUs** (e.g. Intel Iris Xe + NVIDIA T500): Windows may give Brush the
+   integrated GPU, which is much slower. In Windows **Settings > System > Display > Graphics**,
+   add `brush_app.exe` and set it to **High performance** (the NVIDIA GPU). The pipeline logs
+   the GPU Brush uses (`Brush GPU: NVIDIA T500 (DiscreteGpu, Vulkan)`, also in the manifest
+   under `steps.train.info.gpu`) and warns if it is not a dedicated GPU.
+4. Run, e.g. with the settings that fit a 4 GB GPU:
+   ```powershell
+   cpipe run --videos C:\path\to\room --output data\runs\room `
+     --set train.trainer=brush --set train.max_splats=1000000 --set train.max_resolution=1280
+   ```
+
+| Setting | Default | Meaning (Brush) |
+|---|---|---|
+| `train.max_steps` | 30,000 (`fast`: 7,000) | `--total-steps` |
+| `train.sh_degree` | 3 | `--sh-degree` |
+| `train.max_splats` | Brush's default (10,000,000) | `--max-splats`; ~1,000,000 for a 4 GB GPU |
+| `train.max_resolution` | `frames.max_long_side` | `--max-resolution` (longest image side used for training) |
+| `train.extra_args` | `[]` | any other `brush_app` option |
+
+Brush keeps COLMAP's coordinates (no normalisation): the step checks this on every run
+(COLMAP's points must lie right next to splats) and records the identity transform (see
+"Outputs" below). Brush's GPU tuning cache lives in `~/.cache/colibrimo-pipeline/brush`.
+
+Measured on myRoom2 (3 videos, 300 frames, NVIDIA T500, the settings above, SH degree 3,
+30,000 steps): **59 min** of training, 282,405 splats, `scene.ply` 66.6 MB. Long runs: set
+Windows sleep to **Never** while plugged in. Brush logs its progress every 200 steps; the
+console shows `Brush: step N / 30000, M splats` every 2,000 steps.
 
 ## Usage
 
@@ -164,26 +205,31 @@ Timings per preset on a Colab T4 are **not measured yet** (Step 2 benchmarks).
 ```
 data/runs/room1/
 ├── manifest.json            inputs, config, versions, git commit, per-step status/timings/results
-├── scene.ply                final Gaussian Splat (normalised coordinates, see "transform")
+├── scene.ply                final Gaussian Splat (coordinates: see "transform")
 ├── input/videos.json        ffprobe metadata of each video
 ├── frames.json              every frame: file, source video, index, timestamp
 ├── colmap/images/           selected frames, named after their video (bottom_00000.jpg ...)
 ├── colmap/database.db       COLMAP features and matches
-├── colmap/sparse/0/         camera poses + sparse points (largest model; others: unused_N)
-├── train/ply/               trained splat from gsplat
-├── train/ckpts/             gsplat checkpoint (for evaluation in Step 2)
-├── train/transform.json     scene normalisation applied by gsplat
+├── colmap/sparse/0/         camera poses + sparse points (the only model in sparse/)
+├── colmap/unused_models/    other, smaller models COLMAP made, if any (model_1 ...)
+├── train/ply/               gsplat: trained splat
+├── train/ckpts/             gsplat: checkpoint (for evaluation in Step 2)
+├── train/export_30000.ply   Brush: trained splat (number = training steps)
+├── train/transform.json     scene transform applied by the trainer
 └── logs/                    pipeline.log (everything) + one log per step
 ```
 
 **`manifest.json`** contains: `input` (`videos`: list of paths), `config` (fully resolved), `tool_versions`
-(ffmpeg, ffprobe, COLMAP, and on GPU runs Python, torch, CUDA, gsplat, GPU model and memory),
+(ffmpeg, ffprobe, COLMAP, and on gsplat runs Python, torch, CUDA, gsplat, GPU model and memory;
+on Brush runs the Brush version, with the GPU in `steps.train.info.gpu`),
 `git_commit`, `pipeline_version`, `system`, `status`, `total_duration_s`, and per step:
 `status`, `started_at`, `finished_at`, `duration_s`, `outputs`, `info` (e.g. frames registered by
 COLMAP, number of Gaussians) and `error` if it failed.
 
-**`transform`** (in the manifest after `export`): the 4x4 matrix gsplat applied to the COLMAP
-coordinates (recentre, rotate, rescale) before training, so `x_scene = M @ [x, y, z, 1]`. Future
+**`transform`** (in the manifest after `export`): the 4x4 matrix mapping COLMAP coordinates to
+`scene.ply`, `x_scene = M @ [x, y, z, 1]`. gsplat recentres, rotates and rescales the scene
+before training (`normalize_world_space`); Brush keeps COLMAP's coordinates, so `M` is the
+identity, with `identity_check` showing that the splat really matches COLMAP's points. Future
 "after" variants of the room must use the same frame (PRD §7). Gravity alignment and floor at
 y=0 come in Step 3.
 
@@ -241,7 +287,10 @@ other things, that a 5 s video fails at `validate` and a static shot fails at `e
 | `The video looks static` | The camera must move through the room. |
 | `COLMAP placed only X of Y frames` | Capture problem (fast motion, blur, mirrors, low light, turning on the spot). Try `--set poses.matcher=exhaustive` (slower) or re-film. |
 | `HDR video ... needs FFmpeg's zscale ... filter(s)` | Install an FFmpeg build with libzimg (gyan.dev "full" on Windows), or `--set frames.hdr_tonemap=false` (washed-out colours). |
-| `Training needs an NVIDIA GPU with CUDA` | Run `--until poses` here and train on Colab. |
+| `Training needs an NVIDIA GPU with CUDA` | Run `--until poses` here and train on Colab, or train with Brush (`--set train.trainer=brush`). |
+| `'brush_app' was not found` | Set `CPIPE_BRUSH` (or `train.brush_exe`) to `brush_app.exe`. |
+| `Warning: Brush is not using a dedicated GPU` | Windows Settings > System > Display > Graphics: set `brush_app.exe` to High performance. |
+| `The Brush splat does not seem to be in COLMAP's coordinates` | A Brush version that normalises the scene; the transform must be worked out before using it (D-013). |
 | `gsplat's examples folder is not configured` | Set `GSPLAT_EXAMPLES_DIR` to `<gsplat checkout>/examples`. |
 | `No module named 'datasets.colmap'` or `OverflowError: ... out of bounds for uint64` | Fixed automatically by the `train` step (decisions D-009): gsplat v1.5.3's examples clash with Colab's `datasets` package and its pycolmap fork predates numpy 2. If you see them, the pipeline version is too old: reinstall it. |
 | Colab: compile killed (exit 137) | Out of RAM; keep `MAX_JOBS=2` (set by the notebook). |

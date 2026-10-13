@@ -14,6 +14,8 @@ Output layout (what gsplat's trainer expects)::
     colmap/images/        frames (from extract_frames)
     colmap/database.db    COLMAP features and matches
     colmap/sparse/0/      cameras.bin, images.bin, points3D.bin (largest model)
+    colmap/unused_models/ other, smaller models COLMAP made (kept out of sparse/
+                          so trainers only ever see one model)
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from colibrimo_pipeline.config import PosesConfig
 from colibrimo_pipeline.errors import StepError
 from colibrimo_pipeline.steps.base import CAPTURE_TIPS, StepContext, StepResult
 from colibrimo_pipeline.utils.colmap_model import (
+    UNUSED_MODELS_DIR,
     parse_help_options,
     pick_option,
     promote_best_model,
@@ -136,6 +139,7 @@ def run(ctx: StepContext) -> StepResult:
     for leftover in colmap_dir.glob("database.db*"):
         leftover.unlink()
     shutil.rmtree(sparse_dir, ignore_errors=True)
+    shutil.rmtree(colmap_dir / UNUSED_MODELS_DIR, ignore_errors=True)
     sparse_dir.mkdir(parents=True)
 
     num_images = len(list(images_dir.glob("*.jpg")))

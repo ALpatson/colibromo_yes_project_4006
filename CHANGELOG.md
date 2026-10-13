@@ -7,6 +7,8 @@ One entry per PRD step (newest first). Dates are YYYY-MM-DD.
 - Several videos per room (D-010): `--video` repeatable, `--videos <folder>`; per-video validation and metadata; frames shared by duration and named after their video (`bottom_00000.jpg`); `frames.json` records each frame's source video and timestamp.
 - `poses.matcher: auto` (D-011): sequential + loop detection for several videos (myRoom2: all 3 videos in one model in 20 min, vs ~41 min with exhaustive, still available); one COLMAP camera per frame when the videos' resolutions differ.
 - HDR videos (D-012): `validate` detects HLG/PQ (iPhone); `extract_frames` reads only the main video stream and tone-maps HDR to SDR with zscale + tonemap (`frames.hdr_tonemap`, `frames.tonemap`); clear error if FFmpeg lacks zscale.
+- Brush as a second trainer (D-013): `train.trainer: brush` (Windows, any GPU), found via `train.brush_exe` / `CPIPE_BRUSH`; flags from `brush_app --help` v0.3.0 (`train.max_splats`, `train.max_resolution`); logs and records the GPU adapter; checks on every run that the splat is in COLMAP's coordinates and records the identity transform.
+- Unused COLMAP models move to `colmap/unused_models/` (D-014), so trainers only ever see `sparse/0`.
 
 ## 2026-10-08 · Step 1: reconstruction pipeline CLI (in progress)
 

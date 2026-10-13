@@ -39,12 +39,14 @@ def test_promote_best_model_makes_largest_model_zero(tmp_path):
 
     models = promote_best_model(sparse)
 
-    assert [(p.name, n) for p, n in models] == [
-        ("0", 250),
-        ("unused_1", 20),
-        ("unused_2", 5),
+    # The other models leave sparse/ completely (Brush must only see one model).
+    assert [(p.relative_to(tmp_path).as_posix(), n) for p, n in models] == [
+        ("sparse/0", 250),
+        ("unused_models/model_1", 20),
+        ("unused_models/model_2", 5),
     ]
     assert read_entry_count(sparse / "0" / "images.bin") == 250
+    assert [p.name for p in sparse.iterdir()] == ["0"]
 
 
 def test_promote_best_model_no_models(tmp_path):

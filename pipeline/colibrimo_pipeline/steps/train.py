@@ -1,15 +1,18 @@
-"""Step 4: train the Gaussian Splatting scene with gsplat (needs an NVIDIA GPU).
+"""Step 4: train the Gaussian Splatting scene with gsplat or Brush (``train.trainer``).
 
-Runs gsplat's ``examples/simple_trainer.py`` (gsplat v1.5.3) instead of
-Nerfstudio's ``ns-train splatfacto`` (see docs/decisions.md, D-005). The
-trainer is headless (no viewer), uses a fixed random seed (42, set inside
-simple_trainer.py) and writes the PLY at the last step.
-
-Output layout::
+gsplat (default): runs gsplat's ``examples/simple_trainer.py`` (gsplat v1.5.3)
+instead of Nerfstudio's ``ns-train splatfacto`` (see docs/decisions.md, D-005);
+needs Linux + an NVIDIA GPU. Headless, fixed seed (42, set inside
+simple_trainer.py), writes the PLY at the last step::
 
     train/ply/point_cloud_<max_steps-1>.ply   trained splat
     train/ckpts/ckpt_<max_steps-1>_rank0.pt   checkpoint (for evaluation, Step 2)
     train/transform.json                      normalisation applied by gsplat
+
+Brush (D-013): runs ``brush_app`` headless; works on Windows with any GPU::
+
+    train/export_<max_steps>.ply              trained splat
+    train/transform.json                      identity (Brush keeps COLMAP's frame)
 """
 
 from __future__ import annotations
@@ -18,13 +21,30 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
+
+import numpy as np
 
 from colibrimo_pipeline.config import TrainConfig
 from colibrimo_pipeline.errors import StepError
 from colibrimo_pipeline.gsplat_compat import apply_gsplat_fixes
+from colibrimo_pipeline.steps._brush import (
+    brush_executable,
+    brush_version,
+    build_brush_command,
+    expected_brush_ply,
+    identity_check,
+    parse_adapter,
+    parse_progress,
+)
 from colibrimo_pipeline.steps.base import StepContext, StepResult
-from colibrimo_pipeline.utils.ply import read_vertex_count
+from colibrimo_pipeline.utils.colmap_model import (
+    UNUSED_MODELS_DIR,
+    move_unused_models,
+    read_points3d_xyz,
+)
+from colibrimo_pipeline.utils.ply import read_vertex_count, read_vertex_xyz
 from colibrimo_pipeline.utils.proc import run_capture, run_tool
 from colibrimo_pipeline.utils.versions import gpu_env_versions
 
@@ -33,6 +53,7 @@ TRAINER_SEED = (
     42  # hard-coded in gsplat's simple_trainer.py (set_random_seed(42 + rank))
 )
 TRANSFORM_HELPER = Path(__file__).with_name("_gsplat_transform.py")
+BRUSH_CACHE_DIR = Path.home() / ".cache" / "colibrimo-pipeline" / "brush"
 
 NO_GPU_MESSAGE = (
     "Training needs an NVIDIA GPU with CUDA, which this environment does not have "
@@ -122,6 +143,140 @@ def compute_transform(
 
 
 def run(ctx: StepContext) -> StepResult:
+    if ctx.config.train.trainer == "brush":
+        return run_brush(ctx)
+    return run_gsplat(ctx)
+
+
+def run_brush(ctx: StepContext) -> StepResult:
+    """Train with Brush (any GPU, Windows too). Coordinates stay COLMAP's (identity)."""
+    cfg = ctx.config.train
+    exe = brush_executable(ctx.config)
+    sparse_model = ctx.manifest.step_output("poses", "sparse_model")  # colmap/sparse/0
+    data_dir = sparse_model.parent.parent  # colmap/
+
+    # Brush loads whatever model it finds in sparse/: make sure only "0" is there
+    # (run folders made before this was done by the poses step).
+    moved = move_unused_models(sparse_model.parent)
+    for name in moved:
+        ctx.logger.info(
+            "Moved unused COLMAP model sparse/%s to %s/.", name, UNUSED_MODELS_DIR
+        )
+
+    result_dir = ctx.run_dir / "train"
+    shutil.rmtree(result_dir, ignore_errors=True)
+    result_dir.mkdir(parents=True)
+
+    adapter: dict[str, str] = {}
+
+    def watch(line: str) -> None:
+        if not adapter and (found := parse_adapter(line)):
+            adapter.update(found)
+            ctx.logger.info(
+                "Brush GPU: %s (%s, %s)",
+                found["name"],
+                found["device_type"],
+                found["backend"],
+            )
+            if found["device_type"] != "DiscreteGpu":
+                ctx.logger.warning(
+                    "Warning: Brush is not using a dedicated GPU (%s). On a laptop with "
+                    "two GPUs, set brush_app.exe to 'High performance' in Windows Settings "
+                    "> System > Display > Graphics.",
+                    found["name"],
+                )
+        # Progress on the console every 2000 steps (Brush logs every 200).
+        if (progress := parse_progress(line)) and progress[0] // 2000 > last_report[0]:
+            last_report[0] = progress[0] // 2000
+            ctx.logger.info(
+                "  Brush: step %d / %d, %d splats",
+                progress[0],
+                cfg.max_steps,
+                progress[1],
+            )
+
+    last_report = [0]
+    env = dict(os.environ)
+    env.setdefault("RUST_LOG", "info")  # Brush then logs its GPU adapter and progress
+    ctx.logger.info(
+        "Training %d steps with Brush (SH degree %d, max resolution %s, max splats %s)...",
+        cfg.max_steps,
+        cfg.sh_degree,
+        cfg.max_resolution or ctx.config.frames.max_long_side,
+        cfg.max_splats or "Brush default",
+    )
+    start = time.monotonic()
+    # Brush keeps a GPU kernel-tuning cache (target/autotune) in its working
+    # folder: use a persistent one so later runs reuse it.
+    BRUSH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    run_tool(
+        build_brush_command(exe, data_dir, result_dir, ctx.config),
+        step=NAME,
+        logger=ctx.logger,
+        cwd=BRUSH_CACHE_DIR,
+        env=env,
+        heartbeat_s=60,
+        on_line=watch,
+    )
+    train_seconds = time.monotonic() - start
+
+    ply = expected_brush_ply(result_dir, cfg.max_steps)
+    if not ply.is_file():
+        found = sorted(p.name for p in result_dir.glob("*.ply"))
+        raise StepError(
+            NAME,
+            f"Brush finished but {ply.name} was not written (found: {found or 'none'}).",
+        )
+
+    # Brush does not normalise the scene: check it, then record the identity.
+    check = identity_check(
+        read_points3d_xyz(sparse_model / "points3D.bin"), read_vertex_xyz(ply)
+    )
+    ctx.logger.info(
+        "Coordinate check: median distance from a COLMAP point to the nearest splat "
+        "= %.4f x scene size (identity if < %.3f).",
+        check["median_nearest_splat_rel"],
+        check["threshold_rel"],
+    )
+    if not check["same_coordinates"]:
+        raise StepError(
+            NAME,
+            "The Brush splat does not seem to be in COLMAP's coordinates (this Brush "
+            "version may normalise the scene). The scene transform cannot be recorded "
+            f"as identity; see docs/decisions.md D-013. Check: {check}",
+            info={"identity_check": check},
+        )
+    transform = {
+        "matrix_4x4": np.eye(4).tolist(),
+        "scene_scale": 1.0,
+        "normalisation": "none: Brush keeps COLMAP's coordinates",
+        "identity_check": check,
+    }
+    transform_path = result_dir / "transform.json"
+    transform_path.write_text(json.dumps(transform, indent=2), encoding="utf-8")
+
+    num_gaussians = read_vertex_count(ply)
+    ctx.logger.info("Trained %d Gaussians in %.0f s.", num_gaussians, train_seconds)
+    return StepResult(
+        outputs={"ply": ply, "transform": transform_path},
+        info={
+            "trainer": "brush",
+            "max_steps": cfg.max_steps,
+            "sh_degree": cfg.sh_degree,
+            "max_resolution": cfg.max_resolution or ctx.config.frames.max_long_side,
+            "max_splats": cfg.max_splats,
+            "seed": 42,
+            "gpu": adapter or None,
+            "num_gaussians": num_gaussians,
+            "ply_size_bytes": ply.stat().st_size,
+            "train_seconds": round(train_seconds, 1),
+            "moved_unused_models": moved,
+        },
+        versions={"brush": brush_version(exe)},
+    )
+
+
+def run_gsplat(ctx: StepContext) -> StepResult:
     cfg = ctx.config.train
     python = cfg.python or sys.executable
     examples_dir = gsplat_examples_dir(cfg)
