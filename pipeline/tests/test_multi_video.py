@@ -131,25 +131,22 @@ def test_different_resolutions_warn():
 
 
 def test_auto_one_video_is_sequential():
-    choice = choose_matcher(PosesConfig(), num_videos=1, num_frames=300)
+    choice = choose_matcher(PosesConfig(), num_videos=1)
     assert (choice.matcher, choice.loop_detection) == ("sequential", False)
 
 
-def test_auto_several_videos_small_is_exhaustive():
-    choice = choose_matcher(PosesConfig(), num_videos=3, num_frames=300)
-    assert (choice.matcher, choice.loop_detection) == ("exhaustive", False)
+def test_auto_several_videos_uses_loop_detection():
+    choice = choose_matcher(PosesConfig(), num_videos=3)
+    assert (choice.matcher, choice.loop_detection) == ("sequential", True)
     assert "3 videos" in choice.reason
 
 
-def test_auto_several_videos_large_uses_loop_detection():
-    choice = choose_matcher(PosesConfig(), num_videos=3, num_frames=500)
-    assert (choice.matcher, choice.loop_detection) == ("sequential", True)
-
-
 def test_explicit_matcher_is_respected():
+    cfg = PosesConfig(matcher="exhaustive")
+    assert choose_matcher(cfg, num_videos=3).matcher == "exhaustive"
     cfg = PosesConfig(matcher="sequential")
-    assert choose_matcher(cfg, num_videos=3, num_frames=100).matcher == "sequential"
+    assert choose_matcher(cfg, num_videos=3).loop_detection is False
     cfg = PosesConfig(matcher="sequential", loop_detection=True)
-    assert choose_matcher(cfg, 1, 100).loop_detection is True
+    assert choose_matcher(cfg, 1).loop_detection is True
     cfg = PosesConfig(matcher="exhaustive", loop_detection=True)
-    assert choose_matcher(cfg, 1, 100).loop_detection is False
+    assert choose_matcher(cfg, 1).loop_detection is False

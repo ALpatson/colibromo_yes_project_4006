@@ -1,8 +1,8 @@
 """Step 3: estimate camera poses with COLMAP (features -> matching -> mapper).
 
-The matcher is chosen by ``choose_matcher``: sequential for one video, and for
-several videos (which sequential matching cannot connect) exhaustive or
-sequential with loop detection, depending on the number of frames.
+The matcher is chosen by ``choose_matcher``: sequential for one video, and
+sequential with loop detection for several videos (which plain sequential
+matching cannot connect).
 
 COLMAP is called directly rather than through Nerfstudio's ``ns-process-data``
 (see docs/decisions.md, D-006). Option names changed between COLMAP 3.x and 4.x
@@ -95,14 +95,14 @@ class MatcherChoice:
     reason: str
 
 
-def choose_matcher(cfg: PosesConfig, num_videos: int, num_frames: int) -> MatcherChoice:
-    """Resolve ``poses.matcher`` (``auto`` picks one from the number of videos/frames).
+def choose_matcher(cfg: PosesConfig, num_videos: int) -> MatcherChoice:
+    """Resolve ``poses.matcher`` (``auto`` picks one from the number of videos).
 
     Sequential matching only compares each frame with its neighbours in time, so
-    separate videos are never connected. With several videos, ``auto`` uses
-    exhaustive matching (every pair) when that is affordable, else sequential
-    matching with loop detection (which also matches similar-looking frames far
-    apart, e.g. from another video).
+    separate videos are never connected. With several videos, ``auto`` adds loop
+    detection, which also matches similar-looking frames far apart (e.g. from
+    another video). On myRoom2 (3 videos, 300 frames) it connected all videos in
+    half the time of exhaustive matching (docs/decisions.md, D-011).
     """
     if cfg.matcher != "auto":
         return MatcherChoice(
@@ -114,18 +114,10 @@ def choose_matcher(cfg: PosesConfig, num_videos: int, num_frames: int) -> Matche
         return MatcherChoice(
             "sequential", cfg.loop_detection, "one video: frames are in time order"
         )
-    if num_frames <= cfg.exhaustive_max_frames:
-        return MatcherChoice(
-            "exhaustive",
-            False,
-            f"{num_videos} videos, {num_frames} frames <= exhaustive_max_frames "
-            f"({cfg.exhaustive_max_frames})",
-        )
     return MatcherChoice(
         "sequential",
         True,
-        f"{num_videos} videos, {num_frames} frames > exhaustive_max_frames "
-        f"({cfg.exhaustive_max_frames}): loop detection connects the videos",
+        f"{num_videos} videos: loop detection connects the videos",
     )
 
 
@@ -177,7 +169,7 @@ def run(ctx: StepContext) -> StepResult:
     )
     colmap.run(command, args)
 
-    choice = choose_matcher(cfg, num_videos, num_images)
+    choice = choose_matcher(cfg, num_videos)
     ctx.logger.info(
         "COLMAP 2/3: matching features (%s%s; %s)...",
         choice.matcher,

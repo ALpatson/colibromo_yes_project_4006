@@ -87,9 +87,9 @@ class PosesConfig(_Section):
 
     matcher: Literal["auto", "sequential", "exhaustive"] = Field(
         "auto",
-        description="auto: 'sequential' for one video. With several videos "
-        "(sequential matching does not connect them): 'exhaustive' up to "
-        "exhaustive_max_frames frames, else 'sequential' with loop detection.",
+        description="auto: 'sequential' for one video; 'sequential' with loop "
+        "detection for several videos (plain sequential matching does not connect "
+        "them). 'exhaustive' matches every pair: also connects videos, but slower.",
     )
     sequential_overlap: int = Field(
         10, ge=1, description="Neighbours matched per frame."
@@ -104,12 +104,6 @@ class PosesConfig(_Section):
         None,
         description="Vocabulary tree for loop detection. Empty = COLMAP downloads "
         "and caches its default tree (needs internet the first time).",
-    )
-    exhaustive_max_frames: int = Field(
-        400,
-        ge=2,
-        description="matcher=auto with several videos: exhaustive matching up to "
-        "this many frames (cost grows with frames squared).",
     )
     camera_model: Literal[
         "SIMPLE_PINHOLE", "PINHOLE", "SIMPLE_RADIAL", "RADIAL", "OPENCV"

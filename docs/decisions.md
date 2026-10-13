@@ -153,11 +153,25 @@ Each entry: **Context** (why a decision was needed), **Decision**, **Consequence
 
 **Decision:** new default `poses.matcher: auto`:
 - one video: `sequential` (as before);
-- several videos, at most `poses.exhaustive_max_frames` (400) frames: `exhaustive` (every pair; cost grows with frames squared, fine with a CUDA COLMAP at 300 frames);
-- more frames: `sequential` with `SequentialMatching.loop_detection=1`, which also matches visually similar frames far apart in time.
+- several videos: `sequential` with `SequentialMatching.loop_detection=1`, which also matches visually similar frames far apart in time (e.g. the same wall seen in another video).
 
-Option names checked with COLMAP 4.2.1's `sequential_matcher --help` (`SequentialMatching.loop_detection`, `SequentialMatching.vocab_tree_path`). Loop detection needs a vocabulary tree: per COLMAP's tutorial, "A default tree will be automatically downloaded and cached" when no path is given (internet needed the first time); `poses.vocab_tree_path` can point to a local one. Explicit `sequential` / `exhaustive` are still accepted. The chosen matcher and the reason are recorded in the manifest (`poses.info.matcher_reason`).
+`exhaustive` (every pair) stays available with `--set poses.matcher=exhaustive`; it also connects the videos but is about twice as slow (measurements below). A first version of this decision chose exhaustive matching up to 400 frames (`poses.exhaustive_max_frames`); the measurements below replaced that with loop detection for every multi-video run, and the setting was removed before being pushed.
 
-**Consequences:** multi-video runs take longer to match than single-video ones. With several videos, the `fast` (150 frames) and `balanced` (300) presets use exhaustive matching; `quality` (500) uses sequential matching with loop detection.
+Option names checked with COLMAP 4.2.1's `sequential_matcher --help` (`SequentialMatching.loop_detection`, `SequentialMatching.vocab_tree_path`). Loop detection needs a vocabulary tree: per COLMAP's tutorial, "A default tree will be automatically downloaded and cached" when no path is given (internet needed the first time); `poses.vocab_tree_path` can point to a local one. The chosen matcher and the reason are recorded in the manifest (`poses.info.matcher_reason`).
 
-**Measured (2026-10-13, myRoom2, 3 videos, `balanced`, COLMAP 4.2.1 CUDA on an NVIDIA T500 4 GB, `poses.use_gpu=true`):** 300 of 300 frames registered in one model (25,106 points). Feature extraction 36 s, exhaustive matching about 35 min, mapper about 6 min. Matching is the bottleneck on this small GPU; if it is too slow, lower `poses.exhaustive_max_frames` so that loop detection is used instead (not measured yet).
+**Measured (2026-10-13, myRoom2, 3 videos, `balanced` = 300 frames, COLMAP 4.2.1 CUDA on an NVIDIA T500 4 GB, `poses.use_gpu=true`):**
+
+| | Exhaustive | Sequential + loop detection (default) |
+|---|---|---|
+| Feature extraction | 36 s | 56 s |
+| Matching | ~35 min | 13 min |
+| Mapper | 6.5 min | 6.3 min |
+| **Total `poses`** | **~41 min** | **20 min** |
+| Frames registered | 300 / 300 | 296 / 300 (99%) |
+| Models | 1 | 1 |
+| Frames per video in the model (bottom / middle / up) | 121 / 106 / 73 | 117 / 106 / 73 |
+| 3D points | 25,106 | 20,233 |
+
+Both connect all three heights in one model. (Exhaustive wall-clock time was longer because the laptop slept for about an hour; the table excludes that pause.)
+
+**Consequences:** multi-video runs need internet the first time (vocabulary tree download). For comparison, COLMAP's own `automatic_reconstructor` (data type video, ~255 frames) took about 3 min on the same videos; it uses its own extraction/matching settings, which were not compared in detail. If `poses` stays the bottleneck, that comparison is the next thing to look at.

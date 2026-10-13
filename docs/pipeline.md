@@ -96,15 +96,22 @@ Film the room in several passes (e.g. three heights, see the
   300 frames: bottom 93.5 s → 121, middle 81.9 s → 106, up 56.9 s → 73.
 - Frames are named after their video (`bottom_00000.jpg` …, in time order);
   `frames.json` lists each frame's video and timestamp.
-- Matching: sequential matching never connects separate videos, so with
-  `poses.matcher: auto` (default) several videos use **exhaustive** matching up to
-  `poses.exhaustive_max_frames` (400) frames, and **sequential + loop detection**
-  above that (COLMAP downloads its default vocabulary tree the first time, or set
-  `poses.vocab_tree_path`). The choice and reason are in the manifest
-  (`steps.poses.info.matcher_reason`). Force one with `--set poses.matcher=exhaustive`.
-- Timing, myRoom2 (3 videos, 300 frames, CUDA COLMAP on an NVIDIA T500): all 300 frames
-  registered in one model; exhaustive matching about 35 min, mapper about 6 min. Keep the
-  laptop plugged in and stop it from sleeping during long runs (sleep pauses COLMAP).
+- Matching: plain sequential matching never connects separate videos, so with
+  `poses.matcher: auto` (default) several videos use **sequential + loop detection**
+  (COLMAP downloads its default vocabulary tree the first time, so internet is needed
+  once; or set `poses.vocab_tree_path`). The choice and reason are in the manifest
+  (`steps.poses.info.matcher_reason`). `--set poses.matcher=exhaustive` matches every
+  pair instead: also connects the videos, but about twice as slow.
+- Timing, myRoom2 (3 videos, 300 frames, CUDA COLMAP on an NVIDIA T500), both put all
+  three videos in one model (details in [decisions.md](decisions.md) D-011):
+
+  | Matcher | `poses` time | Frames registered |
+  |---|---|---|
+  | sequential + loop detection (default) | 20 min | 296 / 300 |
+  | exhaustive | ~41 min | 300 / 300 |
+
+- Long runs: keep the laptop plugged in and set Windows sleep to **Never** (Settings →
+  System → Power), otherwise sleep pauses COLMAP.
 
 **Resumability:** a step is skipped if `manifest.json` says it succeeded and its outputs still
 exist. When a step re-runs, all later steps re-run too. Changing settings in an existing run
