@@ -1,19 +1,19 @@
 # Reconstruction pipeline (`cpipe`)
 
-Turns a phone video of one room into a 3D Gaussian Splatting scene (`scene.ply`).
-Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-008).
+Turns one or more phone videos of one room into a 3D Gaussian Splatting scene (`scene.ply`).
+Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-011).
 
 ```
-video ──validate──▶ extract_frames ──▶ poses ──▶ train ──▶ export ──▶ scene.ply
-        (ffprobe)     (FFmpeg)        (COLMAP)   (gsplat,    (copy +
-                                                  NVIDIA GPU)  transform)
+video(s) ──validate──▶ extract_frames ──▶ poses ──▶ train ──▶ export ──▶ scene.ply
+           (ffprobe)     (FFmpeg)        (COLMAP)   (gsplat,    (copy +
+                                                     NVIDIA GPU)  transform)
 ```
 
 | Step | What it does | Runs on |
 |---|---|---|
-| `validate` | Reads the video with ffprobe. Fails if shorter than 20 s or longer than 5 min; warns below 1080p. | any machine |
-| `extract_frames` | Extracts 2x the target frame count with FFmpeg, keeps the sharpest frame of each group, downscales. Fails if the video looks static. | any machine |
-| `poses` | COLMAP: feature extraction, sequential matching, mapper. Keeps the largest model. Fails if fewer than 70% of frames are registered. | any machine (CPU) |
+| `validate` | Reads each video with ffprobe. Fails if all videos together are shorter than 20 s or one video is longer than 5 min; warns below 1080p. | any machine |
+| `extract_frames` | Shares the target frame count between the videos by duration. Per video: extracts 2x its share with FFmpeg, keeps the sharpest frame of each group, downscales. Fails if a video looks static. | any machine |
+| `poses` | COLMAP: feature extraction, matching (sequential for one video, exhaustive or loop detection for several), mapper. Keeps the largest model. Fails if fewer than 70% of frames are registered. | any machine (CPU, or GPU with a CUDA build) |
 | `train` | gsplat `simple_trainer.py` (headless, seed 42). | **NVIDIA GPU only** |
 | `export` | Copies the trained splat to `scene.ply`, records the scene transform in the manifest. | any machine |
 
@@ -42,6 +42,14 @@ skipped automatically, so a run folder can move between machines.
    $env:CPIPE_COLMAP  = "D:\tools\colmap\bin\colmap.exe"
    ```
    Use `setx NAME value` instead of `$env:NAME = value` to make them permanent (new terminals).
+
+   **Laptop with an NVIDIA GPU** (e.g. NVIDIA T500): use the CUDA build
+   `colmap-x64-windows-cuda.zip` instead and run COLMAP on the GPU with
+   `--set poses.use_gpu=true` (much faster feature extraction and matching). On the
+   test laptop it is unzipped in Downloads:
+   ```powershell
+   $env:CPIPE_COLMAP = "C:\Users\JOSEPHINE\Downloads\colmap-x64-windows-cuda\bin\colmap.exe"
+   ```
 4. Install the pipeline (editable, with test tools):
    ```powershell
    .venv\Scripts\activate
@@ -55,10 +63,16 @@ On Linux/macOS: install `ffmpeg` and `colmap` with your package manager, then st
 
 ```bash
 cpipe run --video data/videos/room1.mp4 --output data/runs/room1 --preset balanced
+
+# One room filmed as several videos (e.g. at three heights):
+cpipe run --video bottom.mp4 --video middle.mp4 --video up.mp4 --output data/runs/room2
+cpipe run --videos data/videos/room2 --output data/runs/room2   # every video in the folder
 ```
 
 | Option | Meaning |
 |---|---|
+| `--video FILE` | input video; repeat for several videos of the same room |
+| `--videos FOLDER` | every video file (`.mp4 .mov .m4v .mkv .avi .webm`) in the folder, sorted by name |
 | `--preset NAME\|FILE` | `fast`, `balanced` (default), `quality`, or your own YAML file |
 | `--frames N` | number of frames kept (`frames.target_count`) |
 | `--steps N` | training steps (`train.max_steps`) |
@@ -70,6 +84,27 @@ cpipe run --video data/videos/room1.mp4 --output data/runs/room1 --preset balanc
 
 `cpipe config --preset fast --set frames.target_count=200` prints the resolved settings without
 running anything. Exit codes: `0` success, `1` a step failed, `2` configuration error.
+
+### Several videos per room
+
+Film the room in several passes (e.g. three heights, see the
+[capture guide](capture-guide.md)) and give all videos to one run:
+
+- Each video is named after its file (`bottom.mp4` → `bottom`); names must be unique.
+- The frame budget (`frames.target_count`) is shared in proportion to each video's
+  duration, with at least `frames.min_per_video` (20) per video. Example, myRoom2 with
+  300 frames: bottom 93.5 s → 121, middle 81.9 s → 106, up 56.9 s → 73.
+- Frames are named after their video (`bottom_00000.jpg` …, in time order);
+  `frames.json` lists each frame's video and timestamp.
+- Matching: sequential matching never connects separate videos, so with
+  `poses.matcher: auto` (default) several videos use **exhaustive** matching up to
+  `poses.exhaustive_max_frames` (400) frames, and **sequential + loop detection**
+  above that (COLMAP downloads its default vocabulary tree the first time, or set
+  `poses.vocab_tree_path`). The choice and reason are in the manifest
+  (`steps.poses.info.matcher_reason`). Force one with `--set poses.matcher=exhaustive`.
+- Timing, myRoom2 (3 videos, 300 frames, CUDA COLMAP on an NVIDIA T500): all 300 frames
+  registered in one model; exhaustive matching about 35 min, mapper about 6 min. Keep the
+  laptop plugged in and stop it from sleeping during long runs (sleep pauses COLMAP).
 
 **Resumability:** a step is skipped if `manifest.json` says it succeeded and its outputs still
 exist. When a step re-runs, all later steps re-run too. Changing settings in an existing run
@@ -107,8 +142,9 @@ Timings per preset on a Colab T4 are **not measured yet** (Step 2 benchmarks).
 data/runs/room1/
 ├── manifest.json            inputs, config, versions, git commit, per-step status/timings/results
 ├── scene.ply                final Gaussian Splat (normalised coordinates, see "transform")
-├── input/video_info.json    ffprobe metadata
-├── colmap/images/           selected frames (frame_00000.jpg ...)
+├── input/videos.json        ffprobe metadata of each video
+├── frames.json              every frame: file, source video, index, timestamp
+├── colmap/images/           selected frames, named after their video (bottom_00000.jpg ...)
 ├── colmap/database.db       COLMAP features and matches
 ├── colmap/sparse/0/         camera poses + sparse points (largest model; others: unused_N)
 ├── train/ply/               trained splat from gsplat
@@ -117,7 +153,7 @@ data/runs/room1/
 └── logs/                    pipeline.log (everything) + one log per step
 ```
 
-**`manifest.json`** contains: `input` (video path), `config` (fully resolved), `tool_versions`
+**`manifest.json`** contains: `input` (`videos`: list of paths), `config` (fully resolved), `tool_versions`
 (ffmpeg, ffprobe, COLMAP, and on GPU runs Python, torch, CUDA, gsplat, GPU model and memory),
 `git_commit`, `pipeline_version`, `system`, `status`, `total_duration_s`, and per step:
 `status`, `started_at`, `finished_at`, `duration_s`, `outputs`, `info` (e.g. frames registered by

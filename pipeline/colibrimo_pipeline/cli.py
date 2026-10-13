@@ -3,6 +3,8 @@
 Examples::
 
     cpipe run --video data/videos/room1.mp4 --output data/runs/room1 --preset balanced
+    cpipe run --video bottom.mp4 --video middle.mp4 --video up.mp4 --output runs/room2
+    cpipe run --videos data/videos/room2 --output data/runs/room2      # all videos in a folder
     cpipe run --video room1.mp4 --output runs/room1 --until poses     # laptop, no GPU
     cpipe run --video room1.mp4 --output runs/room1 --set poses.matcher=exhaustive
     cpipe config --preset fast                                         # show settings
@@ -25,6 +27,7 @@ from colibrimo_pipeline.config import (
 )
 from colibrimo_pipeline.errors import PipelineError, StepError
 from colibrimo_pipeline.pipeline import STEP_NAMES, run_pipeline
+from colibrimo_pipeline.utils.videos import collect_videos
 
 
 def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
@@ -55,8 +58,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"cpipe {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="Run the pipeline on a video.")
-    run.add_argument("--video", required=True, type=Path, help="Input video file.")
+    run = sub.add_parser("run", help="Run the pipeline on the video(s) of one room.")
+    run.add_argument(
+        "--video",
+        action="append",
+        default=[],
+        type=Path,
+        help="Input video file. Repeat for several videos of the same room "
+        "(e.g. filmed at three heights).",
+    )
+    run.add_argument(
+        "--videos",
+        type=Path,
+        metavar="FOLDER",
+        help="Use every video file in this folder (sorted by name).",
+    )
     run.add_argument(
         "--output", required=True, type=Path, help="Run folder (created if needed)."
     )
@@ -100,8 +116,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
+        videos = collect_videos(args.video, args.videos)
         manifest = run_pipeline(
-            args.video,
+            [v.path for v in videos],
             args.output,
             config,
             force=args.force,

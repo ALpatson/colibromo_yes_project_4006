@@ -2,6 +2,11 @@
 
 One entry per PRD step (newest first). Dates are YYYY-MM-DD.
 
+## 2026-10-13 · Step 1: pipeline improvements from manual tests
+
+- Several videos per room (D-010): `--video` repeatable, `--videos <folder>`; per-video validation and metadata; frames shared by duration and named after their video (`bottom_00000.jpg`); `frames.json` records each frame's source video and timestamp.
+- `poses.matcher: auto` (D-011): exhaustive matching for several videos up to 400 frames, sequential + loop detection above; one COLMAP camera per frame when the videos' resolutions differ.
+
 ## 2026-10-08 · Step 1: reconstruction pipeline CLI (in progress)
 
 - `pipeline/`: Python package `colibrimo-pipeline` with the `cpipe` CLI, also usable as a library (`run_pipeline`).

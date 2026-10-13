@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 import traceback
+from collections.abc import Sequence
 from pathlib import Path
 from types import ModuleType
 
@@ -21,6 +22,7 @@ from colibrimo_pipeline.steps import export, extract_frames, poses, train, valid
 from colibrimo_pipeline.steps.base import StepContext
 from colibrimo_pipeline.utils.logs import close_logging, setup_logging, step_log_file
 from colibrimo_pipeline.utils.versions import git_commit, pipeline_version, system_info
+from colibrimo_pipeline.utils.videos import VideoInput, collect_videos
 
 STEPS: list[ModuleType] = [validate, extract_frames, poses, train, export]
 STEP_NAMES: list[str] = [step.NAME for step in STEPS]
@@ -33,21 +35,26 @@ def _format_duration(seconds: float) -> str:
 
 
 def _warn_if_inputs_changed(
-    manifest: Manifest, video: Path, config: PipelineConfig, logger
+    manifest: Manifest, videos: list[VideoInput], config: PipelineConfig, logger
 ):
     previous_config = manifest.data.get("config")
-    previous_video = manifest.data.get("input", {}).get("video")
+    previous_input = manifest.data.get("input", {})
+    previous = previous_input.get("videos") or (
+        [previous_input["video"]] if previous_input.get("video") else []
+    )
     if previous_config and previous_config != config.model_dump(mode="json"):
         logger.warning(
             "Warning: the configuration differs from the previous run in this folder. "
             "Completed steps are reused; use --force or --from-step to recompute them."
         )
-    if previous_video and Path(previous_video).name != video.name:
+    previous_names = [Path(p).name for p in previous]
+    current_names = [v.path.name for v in videos]
+    if previous_names and previous_names != current_names:
         logger.warning(
-            "Warning: this folder was used for '%s' before; now '%s'. "
+            "Warning: this folder was used for %s before; now %s. "
             "Use a new output folder or --force.",
-            Path(previous_video).name,
-            video.name,
+            ", ".join(previous_names),
+            ", ".join(current_names),
         )
 
 
@@ -87,7 +94,7 @@ def _run_step(step: ModuleType, ctx: StepContext, position: str) -> None:
 
 
 def run_pipeline(
-    video: str | Path,
+    videos: str | Path | Sequence[str | Path],
     output_dir: str | Path,
     config: PipelineConfig,
     *,
@@ -97,10 +104,12 @@ def run_pipeline(
     verbose: bool = False,
     steps: list[ModuleType] | None = None,
 ) -> Manifest:
-    """Run the pipeline on ``video`` into ``output_dir`` and return the manifest.
+    """Run the pipeline on one video or several videos of the same room.
 
-    Raises StepError (with ``.step``) if a step fails. ``steps`` is only meant
-    for tests (to swap in fake steps).
+    ``videos`` is a path or a list of paths (e.g. the same room filmed at three
+    heights). Results go to ``output_dir``; returns the manifest. Raises
+    StepError (with ``.step``) if a step fails. ``steps`` is only meant for
+    tests (to swap in fake steps).
     """
     steps = steps or STEPS
     names = [step.NAME for step in steps]
@@ -108,17 +117,17 @@ def run_pipeline(
         if value is not None and value not in names:
             raise ConfigError(f"Unknown step '{value}' for {option}. Steps: {names}")
 
-    video = Path(video).resolve()
+    inputs = collect_videos(videos)
     run_dir = Path(output_dir).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     logger = setup_logging(run_dir / "logs", verbose)
     try:
         manifest = Manifest.load_or_create(run_dir)
-        _warn_if_inputs_changed(manifest, video, config, logger)
+        _warn_if_inputs_changed(manifest, inputs, config, logger)
         manifest.set_run_info(
             pipeline_version=pipeline_version(),
             git_commit=git_commit(),
-            input={"video": str(video)},
+            input={"videos": [str(v.path) for v in inputs]},
             config=config.model_dump(mode="json"),
             system=system_info(),
         )
@@ -128,7 +137,7 @@ def run_pipeline(
 
         start_index = names.index(from_step) if from_step else None
         last_index = names.index(until) if until else len(steps) - 1
-        ctx = StepContext(run_dir, video, config, manifest, logger)
+        ctx = StepContext(run_dir, inputs, config, manifest, logger)
         rerun = force
         total_start = time.monotonic()
 

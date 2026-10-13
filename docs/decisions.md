@@ -129,3 +129,35 @@ Each entry: **Context** (why a decision was needed), **Decision**, **Consequence
 **Consequences:**
 - The pipeline edits files of a third-party checkout/package; acceptable for a pinned version, removable once gsplat releases the main-branch loader.
 - Known, not fixed: the same pycolmap fork reads binary files with native `struct` `'L'` (4 bytes on Windows, 8 on Linux), so gsplat v1.5.3 training cannot read COLMAP models on **Windows**. Irrelevant for now (training needs Linux + NVIDIA: Colab, Docker).
+
+---
+
+## D-010 · Several videos per room · 2026-10-13
+
+**Context:** the best room so far (myRoom2) came from three videos filmed at three heights (`bottom.mp4`, `middle.mp4`, `up.mp4`), merged by hand. The pipeline only accepted one video.
+
+**Decision:**
+- `cpipe run` takes `--video` several times and/or `--videos <folder>` (every `.mp4/.mov/.m4v/.mkv/.avi/.webm`, sorted by name); `run_pipeline()` takes one path or a list. Each video is named after its file (`bottom`), reduced to letters, digits, `-`, `_`; two videos with the same name are rejected.
+- Durations: the 20 s **minimum applies to all videos together**, the 5 min **maximum to each video** (a short extra pass must not fail a run; one very long video is still suspicious).
+- `frames.target_count` is shared between the videos **in proportion to their duration** (largest-remainder rounding, so the total is exact), each video keeping at least `frames.min_per_video` (20). The sharpest-frame selection and the static-video check run per video.
+- Frames are named after their video, `bottom_00000.jpg`, **also for a single video** (`room1_00000.jpg` instead of `frame_00000.jpg`), so there is one naming rule and every frame knows its source. `frames.json` (run folder) lists each frame's file, video, index and timestamp; the manifest has a per-video summary.
+- COLMAP uses one shared camera when all videos have the same resolution/orientation, otherwise one camera per frame (warning in `validate`).
+
+**Consequences:** manifest input is now `input.videos` (list) and `validate` writes `input/videos.json` (was `input/video_info.json`). Run folders from before this change still resume: `extract_frames` reads the old single-video metadata.
+
+---
+
+## D-011 · Matcher chosen automatically (`poses.matcher: auto`) · 2026-10-13
+
+**Context:** sequential matching only compares each frame with its neighbours in time, so frames from different videos are never matched and COLMAP splits the room into one model per video.
+
+**Decision:** new default `poses.matcher: auto`:
+- one video: `sequential` (as before);
+- several videos, at most `poses.exhaustive_max_frames` (400) frames: `exhaustive` (every pair; cost grows with frames squared, fine with a CUDA COLMAP at 300 frames);
+- more frames: `sequential` with `SequentialMatching.loop_detection=1`, which also matches visually similar frames far apart in time.
+
+Option names checked with COLMAP 4.2.1's `sequential_matcher --help` (`SequentialMatching.loop_detection`, `SequentialMatching.vocab_tree_path`). Loop detection needs a vocabulary tree: per COLMAP's tutorial, "A default tree will be automatically downloaded and cached" when no path is given (internet needed the first time); `poses.vocab_tree_path` can point to a local one. Explicit `sequential` / `exhaustive` are still accepted. The chosen matcher and the reason are recorded in the manifest (`poses.info.matcher_reason`).
+
+**Consequences:** multi-video runs take longer to match than single-video ones. With several videos, the `fast` (150 frames) and `balanced` (300) presets use exhaustive matching; `quality` (500) uses sequential matching with loop detection.
+
+**Measured (2026-10-13, myRoom2, 3 videos, `balanced`, COLMAP 4.2.1 CUDA on an NVIDIA T500 4 GB, `poses.use_gpu=true`):** 300 of 300 frames registered in one model (25,106 points). Feature extraction 36 s, exhaustive matching about 35 min, mapper about 6 min. Matching is the bottleneck on this small GPU; if it is too slow, lower `poses.exhaustive_max_frames` so that loop detection is used instead (not measured yet).

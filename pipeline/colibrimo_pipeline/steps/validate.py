@@ -1,4 +1,9 @@
-"""Step 1: check the input video and record its metadata (ffprobe)."""
+"""Step 1: check the input videos and record their metadata (ffprobe).
+
+A room can be filmed as several videos (e.g. at three heights). Each video is
+checked on its own (readable, at most ``max_duration_s``); the minimum duration
+applies to all videos together.
+"""
 
 from __future__ import annotations
 
@@ -104,61 +109,113 @@ def parse_video_info(probe: dict[str, Any], video: Path) -> VideoInfo:
     )
 
 
-def check_video(info: VideoInfo, cfg: ValidationConfig) -> list[str]:
-    """Raise StepError if the video is unusable; return warnings for minor issues."""
+def check_video(
+    info: VideoInfo, cfg: ValidationConfig, label: str = "The video"
+) -> list[str]:
+    """Checks for one video: raise StepError if unusable, return warnings.
+
+    The minimum duration applies to all videos together (see check_videos).
+    """
     if info.duration_s <= 0:
         raise StepError(
-            NAME, "Could not determine the video duration. Is the file complete?"
-        )
-    if info.duration_s < cfg.min_duration_s:
-        raise StepError(
             NAME,
-            f"The video is {info.duration_s:.1f} s long, but at least "
-            f"{cfg.min_duration_s:.0f} s is needed. Film the room for 1 to 3 minutes, "
-            "walking slowly around it (see docs/capture-guide.md).",
+            f"Could not determine the duration of {Path(info.path).name}. "
+            "Is the file complete?",
         )
     if info.duration_s > cfg.max_duration_s:
         raise StepError(
             NAME,
-            f"The video is {info.duration_s / 60:.1f} min long, but at most "
-            f"{cfg.max_duration_s / 60:.0f} min is allowed. Trim it, or film one room per video.",
+            f"{label} is {info.duration_s / 60:.1f} min long, but at most "
+            f"{cfg.max_duration_s / 60:.0f} min per video is allowed. Trim it, or "
+            "film one room per video.",
         )
 
     warnings = []
     short_side = min(info.width, info.height)
     if short_side < cfg.min_resolution:
         warnings.append(
-            f"Resolution {info.width}x{info.height} is below {cfg.min_resolution}p: "
-            "the 3D result may be blurry. Film in 1080p or 4K if possible."
+            f"{label}: resolution {info.width}x{info.height} is below "
+            f"{cfg.min_resolution}p: the 3D result may be blurry. Film in 1080p or 4K "
+            "if possible."
         )
     if info.fps is None:
-        warnings.append("Could not read the frame rate; continuing anyway.")
+        warnings.append(f"{label}: could not read the frame rate; continuing anyway.")
     return warnings
 
 
+def check_videos(infos: list[VideoInfo], cfg: ValidationConfig) -> list[str]:
+    """Check every video, then the total duration. Returns all warnings."""
+    several = len(infos) > 1
+    warnings: list[str] = []
+    for info in infos:
+        label = f"Video '{Path(info.path).name}'" if several else "The video"
+        warnings += check_video(info, cfg, label)
+
+    total = sum(info.duration_s for info in infos)
+    if total < cfg.min_duration_s:
+        what = (
+            f"The videos are {total:.1f} s long in total"
+            if several
+            else (f"The video is {total:.1f} s long")
+        )
+        raise StepError(
+            NAME,
+            f"{what}, but at least {cfg.min_duration_s:.0f} s is needed. Film the room "
+            "for 1 to 3 minutes, walking slowly around it (see docs/capture-guide.md).",
+        )
+    if several and len({(i.width, i.height) for i in infos}) > 1:
+        warnings.append(
+            "The videos have different resolutions or orientations; each video gets "
+            "its own camera model in COLMAP. Film all passes with the same settings "
+            "if possible."
+        )
+    return warnings
+
+
+def same_camera(infos: list[VideoInfo]) -> bool:
+    """True if all videos have the same displayed resolution (assume the same lens)."""
+    return len({(info.width, info.height) for info in infos}) == 1
+
+
 def run(ctx: StepContext) -> StepResult:
-    if not ctx.video.is_file():
-        raise StepError(NAME, f"Video file not found: {ctx.video}")
+    for video in ctx.videos:
+        if not video.path.is_file():
+            raise StepError(NAME, f"Video file not found: {video.path}")
     ffprobe = find_tool("ffprobe")
 
-    info = parse_video_info(probe_video(ffprobe, ctx.video), ctx.video)
-    warnings = check_video(info, ctx.config.validation)
+    infos = [
+        parse_video_info(probe_video(ffprobe, video.path), video.path)
+        for video in ctx.videos
+    ]
+    warnings = check_videos(infos, ctx.config.validation)
     for warning in warnings:
         ctx.logger.warning("Warning: %s", warning)
-    ctx.logger.info(
-        "Video: %.1f s, %dx%d, %s fps, %s",
-        info.duration_s,
-        info.width,
-        info.height,
-        info.fps,
-        info.codec,
-    )
+    for video, info in zip(ctx.videos, infos, strict=True):
+        ctx.logger.info(
+            "Video '%s': %.1f s, %dx%d, %s fps, %s",
+            video.name,
+            info.duration_s,
+            info.width,
+            info.height,
+            info.fps,
+            info.codec,
+        )
 
-    out = ctx.run_dir / "input" / "video_info.json"
+    videos = [
+        {"name": video.name, **info.to_dict()}
+        for video, info in zip(ctx.videos, infos, strict=True)
+    ]
+    out = ctx.run_dir / "input" / "videos.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(info.to_dict(), indent=2), encoding="utf-8")
+    out.write_text(json.dumps(videos, indent=2), encoding="utf-8")
     return StepResult(
-        outputs={"video_info": out},
-        info={"video": info.to_dict(), "warnings": warnings},
+        outputs={"videos_info": out},
+        info={
+            "videos": videos,
+            "num_videos": len(videos),
+            "total_duration_s": round(sum(i.duration_s for i in infos), 3),
+            "same_camera": same_camera(infos),
+            "warnings": warnings,
+        },
         versions={"ffprobe": ffmpeg_version(ffprobe)},
     )

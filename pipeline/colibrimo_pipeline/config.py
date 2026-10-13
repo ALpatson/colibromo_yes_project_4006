@@ -30,8 +30,14 @@ class _Section(BaseModel):
 class ValidationConfig(_Section):
     """Input video checks (step ``validate``)."""
 
-    min_duration_s: float = Field(20.0, gt=0, description="Shorter videos fail.")
-    max_duration_s: float = Field(300.0, gt=0, description="Longer videos fail.")
+    min_duration_s: float = Field(
+        20.0,
+        gt=0,
+        description="Fail if all videos together are shorter than this.",
+    )
+    max_duration_s: float = Field(
+        300.0, gt=0, description="Fail if any single video is longer than this."
+    )
     min_resolution: int = Field(
         1080, gt=0, description="Warn (don't fail) if the short side is below this."
     )
@@ -40,7 +46,18 @@ class ValidationConfig(_Section):
 class FramesConfig(_Section):
     """Frame extraction (step ``extract_frames``)."""
 
-    target_count: int = Field(300, ge=10, description="Frames kept for reconstruction.")
+    target_count: int = Field(
+        300,
+        ge=10,
+        description="Frames kept for reconstruction, in total. With several videos "
+        "they are shared in proportion to each video's duration.",
+    )
+    min_per_video: int = Field(
+        20,
+        ge=1,
+        description="With several videos, each one keeps at least this many frames "
+        "(if target_count allows).",
+    )
     max_long_side: int = Field(
         1600, ge=320, description="Frames are downscaled to this."
     )
@@ -68,9 +85,31 @@ class FramesConfig(_Section):
 class PosesConfig(_Section):
     """Camera pose estimation with COLMAP (step ``poses``)."""
 
-    matcher: Literal["sequential", "exhaustive"] = "sequential"
+    matcher: Literal["auto", "sequential", "exhaustive"] = Field(
+        "auto",
+        description="auto: 'sequential' for one video. With several videos "
+        "(sequential matching does not connect them): 'exhaustive' up to "
+        "exhaustive_max_frames frames, else 'sequential' with loop detection.",
+    )
     sequential_overlap: int = Field(
         10, ge=1, description="Neighbours matched per frame."
+    )
+    loop_detection: bool = Field(
+        False,
+        description="Sequential matching also matches visually similar frames far "
+        "apart in time (vocabulary tree). Switched on automatically by matcher=auto "
+        "for several videos.",
+    )
+    vocab_tree_path: str | None = Field(
+        None,
+        description="Vocabulary tree for loop detection. Empty = COLMAP downloads "
+        "and caches its default tree (needs internet the first time).",
+    )
+    exhaustive_max_frames: int = Field(
+        400,
+        ge=2,
+        description="matcher=auto with several videos: exhaustive matching up to "
+        "this many frames (cost grows with frames squared).",
     )
     camera_model: Literal[
         "SIMPLE_PINHOLE", "PINHOLE", "SIMPLE_RADIAL", "RADIAL", "OPENCV"

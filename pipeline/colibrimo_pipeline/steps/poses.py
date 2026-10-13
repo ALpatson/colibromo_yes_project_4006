@@ -1,5 +1,9 @@
 """Step 3: estimate camera poses with COLMAP (features -> matching -> mapper).
 
+The matcher is chosen by ``choose_matcher``: sequential for one video, and for
+several videos (which sequential matching cannot connect) exhaustive or
+sequential with loop detection, depending on the number of frames.
+
 COLMAP is called directly rather than through Nerfstudio's ``ns-process-data``
 (see docs/decisions.md, D-006). Option names changed between COLMAP 3.x and 4.x
 (e.g. ``SiftExtraction.use_gpu`` -> ``FeatureExtraction.use_gpu``), so each
@@ -18,7 +22,9 @@ import logging
 import os
 import shutil
 import sys
+from dataclasses import dataclass
 
+from colibrimo_pipeline.config import PosesConfig
 from colibrimo_pipeline.errors import StepError
 from colibrimo_pipeline.steps.base import CAPTURE_TIPS, StepContext, StepResult
 from colibrimo_pipeline.utils.colmap_model import (
@@ -63,16 +69,73 @@ class Colmap:
             return
         args += [f"--{name}", str(value)]
 
+    def require_option(self, args: list[str], command: str, name: str, value) -> None:
+        """Like add_option, but fail clearly if this COLMAP does not have the option."""
+        if name not in self.options(command):
+            raise StepError(
+                NAME,
+                f"This COLMAP version has no '--{name}' option for {command}, which the "
+                "chosen matching settings need. Update COLMAP or set "
+                "poses.matcher=exhaustive.",
+            )
+        args += [f"--{name}", str(value)]
+
     def run(self, command: str, args: list[str]) -> None:
         run_tool(
             [self.exe, command, *args], step=NAME, logger=self.logger, env=self.env
         )
 
 
+@dataclass
+class MatcherChoice:
+    """Which COLMAP matcher to run, and why (recorded in the manifest)."""
+
+    matcher: str  # "sequential" or "exhaustive"
+    loop_detection: bool
+    reason: str
+
+
+def choose_matcher(cfg: PosesConfig, num_videos: int, num_frames: int) -> MatcherChoice:
+    """Resolve ``poses.matcher`` (``auto`` picks one from the number of videos/frames).
+
+    Sequential matching only compares each frame with its neighbours in time, so
+    separate videos are never connected. With several videos, ``auto`` uses
+    exhaustive matching (every pair) when that is affordable, else sequential
+    matching with loop detection (which also matches similar-looking frames far
+    apart, e.g. from another video).
+    """
+    if cfg.matcher != "auto":
+        return MatcherChoice(
+            cfg.matcher,
+            cfg.matcher == "sequential" and cfg.loop_detection,
+            "set in config",
+        )
+    if num_videos <= 1:
+        return MatcherChoice(
+            "sequential", cfg.loop_detection, "one video: frames are in time order"
+        )
+    if num_frames <= cfg.exhaustive_max_frames:
+        return MatcherChoice(
+            "exhaustive",
+            False,
+            f"{num_videos} videos, {num_frames} frames <= exhaustive_max_frames "
+            f"({cfg.exhaustive_max_frames})",
+        )
+    return MatcherChoice(
+        "sequential",
+        True,
+        f"{num_videos} videos, {num_frames} frames > exhaustive_max_frames "
+        f"({cfg.exhaustive_max_frames}): loop detection connects the videos",
+    )
+
+
 def run(ctx: StepContext) -> StepResult:
     cfg = ctx.config.poses
     colmap = Colmap(find_tool("colmap"), ctx.logger)
     images_dir = ctx.manifest.step_output("extract_frames", "images_dir")
+    validate_info = ctx.manifest.step_info("validate")
+    num_videos = int(validate_info.get("num_videos", 1))
+    single_camera = bool(validate_info.get("same_camera", True))
     colmap_dir = ctx.run_dir / "colmap"
     database = colmap_dir / "database.db"
     sparse_dir = colmap_dir / "sparse"
@@ -94,8 +157,10 @@ def run(ctx: StepContext) -> StepResult:
         str(images_dir),
         "--ImageReader.camera_model",
         cfg.camera_model,
+        # One shared camera when all videos have the same resolution (same phone
+        # settings); otherwise one camera per frame.
         "--ImageReader.single_camera",
-        "1",
+        "1" if single_camera else "0",
     ]
     command = "feature_extractor"
     colmap.add_option(
@@ -112,8 +177,14 @@ def run(ctx: StepContext) -> StepResult:
     )
     colmap.run(command, args)
 
-    ctx.logger.info("COLMAP 2/3: matching features (%s)...", cfg.matcher)
-    command = f"{cfg.matcher}_matcher"
+    choice = choose_matcher(cfg, num_videos, num_images)
+    ctx.logger.info(
+        "COLMAP 2/3: matching features (%s%s; %s)...",
+        choice.matcher,
+        " + loop detection" if choice.loop_detection else "",
+        choice.reason,
+    )
+    command = f"{choice.matcher}_matcher"
     args = ["--database_path", str(database)]
     colmap.add_option(
         args, command, ["FeatureMatching.use_gpu", "SiftMatching.use_gpu"], use_gpu
@@ -124,10 +195,19 @@ def run(ctx: StepContext) -> StepResult:
         ["FeatureMatching.num_threads", "SiftMatching.num_threads"],
         cfg.num_threads,
     )
-    if cfg.matcher == "sequential":
+    if choice.matcher == "sequential":
         colmap.add_option(
             args, command, ["SequentialMatching.overlap"], cfg.sequential_overlap
         )
+        if choice.loop_detection:
+            colmap.require_option(args, command, "SequentialMatching.loop_detection", 1)
+            if cfg.vocab_tree_path:
+                colmap.require_option(
+                    args,
+                    command,
+                    "SequentialMatching.vocab_tree_path",
+                    cfg.vocab_tree_path,
+                )
     colmap.run(command, args)
 
     ctx.logger.info("COLMAP 3/3: reconstructing camera poses (can take a while)...")
@@ -171,7 +251,11 @@ def run(ctx: StepContext) -> StepResult:
         "num_points3d": read_entry_count(best_dir / "points3D.bin"),
         "num_models": len(models),
         "other_model_sizes": [count for _, count in models[1:]],
-        "matcher": cfg.matcher,
+        "matcher": choice.matcher,
+        "loop_detection": choice.loop_detection,
+        "matcher_reason": choice.reason,
+        "num_videos": num_videos,
+        "single_camera": single_camera,
         "camera_model": cfg.camera_model,
     }
     ctx.logger.info(

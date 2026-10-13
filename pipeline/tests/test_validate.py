@@ -7,6 +7,7 @@ from colibrimo_pipeline.errors import StepError
 from colibrimo_pipeline.steps.validate import (
     VideoInfo,
     check_video,
+    check_videos,
     parse_video_info,
     probe_video,
 )
@@ -58,7 +59,7 @@ def test_check_accepts_normal_video():
 @pytest.mark.parametrize("duration", [5.0, 19.9])
 def test_check_rejects_too_short(duration):
     with pytest.raises(StepError, match="at least 20 s"):
-        check_video(info(duration=duration), ValidationConfig())
+        check_videos([info(duration=duration)], ValidationConfig())
 
 
 def test_check_rejects_too_long():

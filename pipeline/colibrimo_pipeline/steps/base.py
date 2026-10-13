@@ -9,6 +9,7 @@ from typing import Any
 
 from colibrimo_pipeline.config import PipelineConfig
 from colibrimo_pipeline.manifest import Manifest
+from colibrimo_pipeline.utils.videos import VideoInput
 
 # Shown whenever a failure is most likely caused by how the video was filmed.
 CAPTURE_TIPS = (
@@ -20,10 +21,13 @@ CAPTURE_TIPS = (
 
 @dataclass
 class StepContext:
-    """Everything a step needs to do its work."""
+    """Everything a step needs to do its work.
+
+    ``videos``: the room's input videos, in the order given (one or more).
+    """
 
     run_dir: Path
-    video: Path
+    videos: list[VideoInput]
     config: PipelineConfig
     manifest: Manifest
     logger: logging.Logger
