@@ -9,6 +9,7 @@ One entry per PRD step (newest first). Dates are YYYY-MM-DD.
 - HDR videos (D-012): `validate` detects HLG/PQ (iPhone); `extract_frames` reads only the main video stream and tone-maps HDR to SDR with zscale + tonemap (`frames.hdr_tonemap`, `frames.tonemap`); clear error if FFmpeg lacks zscale.
 - Brush as a second trainer (D-013): `train.trainer: brush` (Windows, any GPU), found via `train.brush_exe` / `CPIPE_BRUSH`; flags from `brush_app --help` v0.3.0 (`train.max_splats`, `train.max_resolution`); logs and records the GPU adapter; checks on every run that the splat is in COLMAP's coordinates and records the identity transform.
 - Unused COLMAP models move to `colmap/unused_models/` (D-014), so trainers only ever see `sparse/0`.
+- `export` writes `cameras.json` (D-015): every frame's name, source video, timestamp, position and orientation in scene.ply's coordinates (gsplat transform applied), plus intrinsics; `images.bin` / `cameras.bin` readers in `utils/colmap_model.py`.
 
 ## 2026-10-08 · Step 1: reconstruction pipeline CLI (in progress)
 

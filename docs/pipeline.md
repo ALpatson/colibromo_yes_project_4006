@@ -206,6 +206,7 @@ Timings per preset on a Colab T4 are **not measured yet** (Step 2 benchmarks).
 data/runs/room1/
 ├── manifest.json            inputs, config, versions, git commit, per-step status/timings/results
 ├── scene.ply                final Gaussian Splat (coordinates: see "transform")
+├── cameras.json             every frame's camera pose in scene.ply's coordinates (for the viewer)
 ├── input/videos.json        ffprobe metadata of each video
 ├── frames.json              every frame: file, source video, index, timestamp
 ├── colmap/images/           selected frames, named after their video (bottom_00000.jpg ...)
@@ -232,6 +233,27 @@ before training (`normalize_world_space`); Brush keeps COLMAP's coordinates, so 
 identity, with `identity_check` showing that the splat really matches COLMAP's points. Future
 "after" variants of the room must use the same frame (PRD §7). Gravity alignment and floor at
 y=0 come in Step 3.
+
+**`cameras.json`** (written by `export`, decision D-015): where each frame was filmed from, in
+the same coordinates as `scene.ply` (the transform above is already applied). The viewer uses it
+to level the room, set the eye height (`middle_*` cameras) and limit the walk area.
+
+```json
+{
+  "schema_version": 1,
+  "num_cameras": 300,
+  "videos": {"bottom": 121, "middle": 106, "up": 73},
+  "intrinsics": {"1": {"model": "SIMPLE_RADIAL", "width": 1600, "height": 900, "params": [785.3, 800, 450, -0.0024]}},
+  "cameras": [
+    {"name": "bottom_00000.jpg", "video": "bottom", "frame_index": 0, "time_s": 0.36,
+     "position": [x, y, z], "rotation_wxyz": [w, x, y, z],
+     "up": [x, y, z], "forward": [x, y, z], "camera_id": 1}
+  ]
+}
+```
+
+Camera axes follow COLMAP/OpenCV (x right, y down, z forward): `rotation_wxyz` is the
+world-from-camera rotation, `up` = −y and `forward` = +z as unit vectors.
 
 ## Google Colab
 

@@ -92,6 +92,136 @@ def move_unused_models(sparse_dir: Path) -> list[str]:
     return moved
 
 
+# COLMAP camera model id -> (name, number of parameters). From COLMAP's
+# src/colmap/sensor/models.h (same ids in COLMAP 3.x and 4.x).
+CAMERA_MODELS = {
+    0: ("SIMPLE_PINHOLE", 3),
+    1: ("PINHOLE", 4),
+    2: ("SIMPLE_RADIAL", 4),
+    3: ("RADIAL", 5),
+    4: ("OPENCV", 8),
+    5: ("OPENCV_FISHEYE", 8),
+    6: ("FULL_OPENCV", 12),
+    7: ("FOV", 5),
+    8: ("SIMPLE_RADIAL_FISHEYE", 4),
+    9: ("RADIAL_FISHEYE", 5),
+    10: ("THIN_PRISM_FISHEYE", 12),
+}
+
+
+def read_cameras(path: Path) -> dict[int, dict]:
+    """Intrinsics from a COLMAP ``cameras.bin``: camera_id -> model, size, params.
+
+    Per camera: camera_id (int32), model_id (int32), width (uint64),
+    height (uint64), then the model's parameters (float64).
+    """
+    data = Path(path).read_bytes()
+    (count,) = struct.unpack_from("<Q", data, 0)
+    offset, cameras = 8, {}
+    for _ in range(count):
+        camera_id, model_id, width, height = struct.unpack_from("<iiQQ", data, offset)
+        offset += 24
+        if model_id not in CAMERA_MODELS:
+            raise ValueError(f"{path}: unknown COLMAP camera model id {model_id}.")
+        model, num_params = CAMERA_MODELS[model_id]
+        params = struct.unpack_from(f"<{num_params}d", data, offset)
+        offset += 8 * num_params
+        cameras[camera_id] = {
+            "model": model,
+            "width": width,
+            "height": height,
+            "params": list(params),
+        }
+    return cameras
+
+
+def read_images(path: Path) -> list[dict]:
+    """Registered images from a COLMAP ``images.bin``.
+
+    Per image: image_id (uint32), qvec (w, x, y, z) and tvec (float64) of the
+    camera-from-world transform, camera_id (uint32), name (null-terminated),
+    then its 2D points (count uint64, each x, y float64 + point3D_id int64),
+    which are skipped.
+    """
+    data = Path(path).read_bytes()
+    (count,) = struct.unpack_from("<Q", data, 0)
+    offset, images = 8, []
+    for _ in range(count):
+        image_id, *pose = struct.unpack_from("<I7d", data, offset)
+        offset += 60
+        (camera_id,) = struct.unpack_from("<I", data, offset)
+        offset += 4
+        end = data.index(b"\0", offset)
+        name = data[offset:end].decode("utf-8")
+        offset = end + 1
+        (num_points2d,) = struct.unpack_from("<Q", data, offset)
+        offset += 8 + 24 * num_points2d
+        images.append(
+            {
+                "image_id": image_id,
+                "qvec": pose[:4],
+                "tvec": pose[4:],
+                "camera_id": camera_id,
+                "name": name,
+            }
+        )
+    return images
+
+
+def qvec_to_rotation(qvec) -> np.ndarray:
+    """3x3 rotation matrix from a COLMAP quaternion (w, x, y, z)."""
+    w, x, y, z = qvec
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
+def rotation_to_qvec(r: np.ndarray) -> np.ndarray:
+    """Quaternion (w, x, y, z), w >= 0, from a 3x3 rotation matrix."""
+    # Robust conversion via the largest diagonal term (Shepperd's method).
+    m = r
+    trace = m[0, 0] + m[1, 1] + m[2, 2]
+    if trace > 0:
+        s = 2.0 * np.sqrt(trace + 1.0)
+        q = [
+            0.25 * s,
+            (m[2, 1] - m[1, 2]) / s,
+            (m[0, 2] - m[2, 0]) / s,
+            (m[1, 0] - m[0, 1]) / s,
+        ]
+    elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2])
+        q = [
+            (m[2, 1] - m[1, 2]) / s,
+            0.25 * s,
+            (m[0, 1] + m[1, 0]) / s,
+            (m[0, 2] + m[2, 0]) / s,
+        ]
+    elif m[1, 1] > m[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2])
+        q = [
+            (m[0, 2] - m[2, 0]) / s,
+            (m[0, 1] + m[1, 0]) / s,
+            0.25 * s,
+            (m[1, 2] + m[2, 1]) / s,
+        ]
+    else:
+        s = 2.0 * np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1])
+        q = [
+            (m[1, 0] - m[0, 1]) / s,
+            (m[0, 2] + m[2, 0]) / s,
+            (m[1, 2] + m[2, 1]) / s,
+            0.25 * s,
+        ]
+    q = np.array(q)
+    q /= np.linalg.norm(q)
+    return -q if q[0] < 0 else q
+
+
 def read_points3d_xyz(path: Path) -> np.ndarray:
     """Positions (N x 3, float64) of the 3D points in a COLMAP ``points3D.bin``.
 

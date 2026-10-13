@@ -221,3 +221,15 @@ Both connect all three heights in one model. (Exhaustive wall-clock time was lon
 **Decision:** `poses` keeps only the largest model in `sparse/` (as `0`) and moves the others to `colmap/unused_models/model_N` (kept for debugging; cleared when `poses` re-runs). `train` with Brush also moves anything other than `0` out of `sparse/` before training, so run folders made before this change work too (idempotent, never overwrites).
 
 **Consequences:** `colmap/sparse/` always contains exactly one model; `poses.info.other_model_sizes` still lists the other models' sizes.
+
+---
+
+## D-015 · `cameras.json`: camera poses for the viewer, in scene.ply's coordinates · 2026-10-13
+
+**Context:** the viewer prototype levels the room from the cameras' "up" direction (phones are held upright), takes the eye height from the `middle_*` cameras and limits the walk area to where the cameras were. It read COLMAP's binary files through its own conversion script. The poses must be in the same coordinates as the splat, which differs between trainers (gsplat normalises, Brush does not).
+
+**Decision:** `export` also writes `cameras.json`: for every registered frame its `name`, source `video`, `frame_index` and `time_s` (from `frames.json`; for older run folders the video is taken from the frame name), `position` (camera centre), `rotation_wxyz` (world-from-camera quaternion), `up` and `forward` unit vectors, and `camera_id`; plus `intrinsics` per COLMAP camera, `videos` (frames per video) and the `transform_4x4` used. Poses are converted from COLMAP's camera-from-world (`C = -Rᵀt`, axes = rows of R) and mapped with the run's scene transform `M = [sQ | m]`: `C' = sQC + m`, axes `Q·axis`. A small `images.bin` / `cameras.bin` reader lives in `utils/colmap_model.py` (camera model ids from COLMAP's `models.h`).
+
+**Verified (2026-10-13, myRoom2, Brush/identity):** 300 cameras (bottom 121, middle 106, up 73); positions, up and forward identical (max difference 0.0) to the viewer prototype's independent JavaScript converter on the same `images.bin`. The gsplat case is covered by a test with a known scale + rotation + translation (a point in front of a camera stays in front of it at the scaled distance).
+
+**Consequences:** the viewer only needs `scene.ply` + `cameras.json` from a run folder; no COLMAP files.
