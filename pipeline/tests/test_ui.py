@@ -395,6 +395,17 @@ def test_upload_then_state_then_start(server):
     assert status == 200
 
 
+def test_refused_large_upload_still_gets_its_error_message(server):
+    """The body is read before the error reply, so the client sees the message
+    instead of a reset connection (this failed on Windows before the fix)."""
+    port, _ = server
+    for _ in range(5):
+        status, body = request(
+            port, "PUT", "/api/upload?room=k&file=notes.txt", body=b"x" * 2_000_000
+        )
+        assert status == 400 and "not a video" in json.loads(body)["error"]
+
+
 def test_upload_refuses_non_videos(server):
     port, data_dir = server
     status, body = request(

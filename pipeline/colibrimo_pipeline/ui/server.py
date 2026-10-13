@@ -34,6 +34,7 @@ from colibrimo_pipeline.ui.jobs import (
     Runner,
     UserError,
     clean_room_name,
+    clean_video_filename,
     copy_to_viewer,
     list_rooms,
     list_videos,
@@ -45,6 +46,13 @@ from colibrimo_pipeline.ui.jobs import (
 PAGE = Path(__file__).with_name("page.html")
 HOST = "127.0.0.1"
 MAX_UPLOAD_BYTES = 8 * 1024**3  # 8 GB per video
+MAX_DRAIN_BYTES = (
+    64 * 1024**2
+)  # refused uploads up to this size are read before replying
+
+
+class NotFound(Exception):
+    """Unknown route (answered with 404)."""
 
 
 class App:
@@ -135,6 +143,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle(self, action) -> None:
         if not self._allowed():
+            self._discard_body()
             self._error(
                 "Forbidden: this tool only accepts local requests.",
                 HTTPStatus.FORBIDDEN,
@@ -142,6 +151,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             action()
+        except NotFound:
+            self._error("Not found.", HTTPStatus.NOT_FOUND)
         except Busy as exc:
             self._error(str(exc), HTTPStatus.CONFLICT)
         except PipelineError as exc:  # UserError, ConfigError, ...
@@ -163,22 +174,47 @@ class Handler(BaseHTTPRequestHandler):
 
         self._handle(action)
 
+    def _discard_body(self) -> None:
+        """Read (and drop) an unread request body before answering an error.
+
+        Otherwise the client is still sending when the reply comes and the
+        connection is reset (on Windows), so the browser never sees the error
+        message. Very large bodies are not drained: the connection is closed.
+        """
+        length = int(self.headers.get("Content-Length") or 0)
+        self.close_connection = True
+        if 0 < length <= MAX_DRAIN_BYTES:
+            while length > 0:
+                chunk = self.rfile.read(min(1 << 20, length))
+                if not chunk:
+                    break
+                length -= len(chunk)
+
     def do_PUT(self) -> None:  # noqa: N802
         def action():
-            if urlparse(self.path).path != "/api/upload":
-                self._error("Not found.", HTTPStatus.NOT_FOUND)
-                return
-            query = self._query()
-            length = int(self.headers.get("Content-Length") or -1)
-            if length < 0 or length > MAX_UPLOAD_BYTES:
-                raise UserError("Missing or too large Content-Length.")
-            path = save_upload(
-                self.app.runner.uploads_dir,
-                query.get("room", ""),
-                query.get("file", ""),
-                self.rfile,
-                length,
-            )
+            body_read = False
+            try:
+                if urlparse(self.path).path != "/api/upload":
+                    raise NotFound
+                query = self._query()
+                length = int(self.headers.get("Content-Length") or -1)
+                if length < 0 or length > MAX_UPLOAD_BYTES:
+                    raise UserError("Missing or too large Content-Length.")
+                # Check the names before reading anything.
+                clean_room_name(query.get("room", ""))
+                clean_video_filename(query.get("file", ""))
+                body_read = True
+                path = save_upload(
+                    self.app.runner.uploads_dir,
+                    query.get("room", ""),
+                    query.get("file", ""),
+                    self.rfile,
+                    length,
+                )
+            except (NotFound, PipelineError):
+                if not body_read:
+                    self._discard_body()
+                raise
             self._json(
                 {"saved": path.name, "size": path.stat().st_size}, HTTPStatus.CREATED
             )
