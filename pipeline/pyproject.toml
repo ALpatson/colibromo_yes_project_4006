@@ -28,7 +28,7 @@ cpipe = "colibrimo_pipeline.cli:main"
 include = ["colibrimo_pipeline*"]
 
 [tool.setuptools.package-data]
-colibrimo_pipeline = ["presets/*.yaml"]
+colibrimo_pipeline = ["presets/*.yaml", "ui/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

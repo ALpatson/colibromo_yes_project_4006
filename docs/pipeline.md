@@ -177,6 +177,40 @@ check with `ffmpeg -filters | findstr zscale`).
 exist. When a step re-runs, all later steps re-run too. Changing settings in an existing run
 folder only prints a warning: use `--from-step` or `--force` to apply them.
 
+### Local web page (`cpipe ui`)
+
+> **Developer tool for the team, not the Stage 1 backend.** The PRD's Step 5 (Django API +
+> Celery worker) will replace it; see decision D-016.
+
+```powershell
+$env:CPIPE_COLMAP = "C:\Users\JOSEPHINE\Downloads\colmap-x64-windows-cuda\bin\colmap.exe"
+$env:CPIPE_BRUSH  = "C:\Users\JOSEPHINE\Downloads\brush-app-x86_64-pc-windows-msvc\brush_app.exe"
+cpipe ui            # opens http://127.0.0.1:8765/ in the browser; Ctrl+C to stop
+```
+
+On the page: type a **room name**, drop the room's videos (one per height), pick a
+**preset** and press **Start**. Videos go to `data/uploads/<room>/`, the run to
+`data/runs/<room>/`. The page shows each step's status (from `manifest.json`) and, during
+training, Brush's step and splat count. If a step fails, its error appears with a **Resume**
+button (finished steps are skipped). At the end it shows the training time, splats and file
+size, and **Open in viewer** copies `scene.ply` + `cameras.json` to the viewer's
+`public/runs/<room>/` and opens `http://localhost:5173/?run=runs/<room>` (start the viewer
+with `npm run dev` first).
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--port` | 8765 | page address `http://127.0.0.1:<port>/` |
+| `--data` | `./data` | where `uploads/` and `runs/` go |
+| `--viewer` | `CPIPE_VIEWER_DIR`, else `~/3DViewing` | viewer project folder (with `public/`) |
+| `--set KEY=VALUE` | Brush, `train.max_splats=1000000`, `train.max_resolution=1280` | any run setting; COLMAP runs on the GPU automatically if it is a CUDA build |
+| `--no-browser` | | don't open the page |
+
+- **This computer only:** it listens on 127.0.0.1, so a phone or another computer cannot
+  open it (room videos are private), and it ignores requests from other web pages.
+- **One run at a time:** Start is disabled while a run is going. There is no cancel button:
+  Ctrl+C stops the server (end `brush_app.exe` in Task Manager if it keeps running).
+- **Long runs:** keep the laptop plugged in and set Windows sleep to **Never**.
+
 ### As a Python library (used by the backend worker in Step 5)
 
 ```python

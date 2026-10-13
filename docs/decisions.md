@@ -233,3 +233,19 @@ Both connect all three heights in one model. (Exhaustive wall-clock time was lon
 **Verified (2026-10-13, myRoom2, Brush/identity):** 300 cameras (bottom 121, middle 106, up 73); positions, up and forward identical (max difference 0.0) to the viewer prototype's independent JavaScript converter on the same `images.bin`. The gsplat case is covered by a test with a known scale + rotation + translation (a point in front of a camera stays in front of it at the scaled distance).
 
 **Consequences:** the viewer only needs `scene.ply` + `cameras.json` from a run folder; no COLMAP files.
+
+---
+
+## D-016 · `cpipe ui`: a local web page for the pipeline (developer tool, not Step 5) · 2026-10-13
+
+**Context:** testing captures means running long `cpipe run` commands with several options (videos, Brush settings, COLMAP on the GPU), watching the logs and resuming after failures. The team wants to do that by dropping videos on a page. The real service for this is PRD **Step 5** (Django + DRF API, Celery worker, MinIO storage), which is not started yet and is much bigger.
+
+**Decision:** a small **local developer tool**, `cpipe ui`, inside the pipeline package:
+- Python standard library only (`http.server` + a background thread; one HTML page with plain JavaScript): no new dependency, no database, no login.
+- It calls `run_pipeline()` as a library: videos in `data/uploads/<room>/`, runs in `data/runs/<room>/`, one run at a time. Defaults: Brush, `max_splats` 1,000,000, `max_resolution` 1280 (a 4 GB GPU), COLMAP on the GPU when it is a CUDA build; `--set` overrides.
+- Progress is read only from the run folder (`manifest.json` + Brush's `Refine iter` lines in `logs/train.log`), so the pipeline itself is unchanged. Resume = calling `run_pipeline()` again on the same folder (its resumability skips finished steps).
+- Privacy: it listens on **127.0.0.1 only** (phones and other computers cannot connect), and rejects requests whose `Host`/`Origin` is not this computer (protection against DNS rebinding and cross-site requests from other web pages). Uploaded file and room names are reduced to safe characters; only video extensions are accepted.
+- "Open in viewer" copies `scene.ply` + `cameras.json` into the viewer prototype's `public/runs/<room>/` (`--viewer`, `CPIPE_VIEWER_DIR`, or `~/3DViewing`) and opens `http://localhost:5173/?run=runs/<room>`.
+- `Manifest.save()` now retries its atomic rename briefly: on Windows it fails while another reader (this page) has `manifest.json` open.
+
+**Consequences:** **Step 5 replaces this tool** (uploads from the phone, jobs in a queue, storage, several users); nothing in the backend should build on it. No cancel button (stop the server with Ctrl+C; a running Brush process may need ending in Task Manager). Runs stop if the laptop sleeps or the server is closed; they can be resumed.

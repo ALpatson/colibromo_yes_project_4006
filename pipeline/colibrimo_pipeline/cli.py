@@ -8,6 +8,7 @@ Examples::
     cpipe run --video room1.mp4 --output runs/room1 --until poses     # laptop, no GPU
     cpipe run --video room1.mp4 --output runs/room1 --set poses.matcher=exhaustive
     cpipe config --preset fast                                         # show settings
+    cpipe ui                                                           # local web page
 """
 
 from __future__ import annotations
@@ -94,7 +95,52 @@ def build_parser() -> argparse.ArgumentParser:
 
     config = sub.add_parser("config", help="Print the resolved configuration as YAML.")
     _add_config_arguments(config)
+
+    ui = sub.add_parser(
+        "ui",
+        help="Local web page to upload videos and run the pipeline (this computer only).",
+    )
+    ui.add_argument("--port", type=int, default=8765, help="Default: 8765.")
+    ui.add_argument(
+        "--data",
+        type=Path,
+        default=Path("data"),
+        help="Folder for uploads/ and runs/. Default: ./data",
+    )
+    ui.add_argument(
+        "--viewer",
+        type=Path,
+        help="Viewer project folder (with public/). Default: CPIPE_VIEWER_DIR, "
+        "else ~/3DViewing if it exists.",
+    )
+    ui.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Override a run setting (default: Brush, max 1,000,000 splats, "
+        "max resolution 1280).",
+    )
+    ui.add_argument(
+        "--no-browser", action="store_true", help="Don't open the page automatically."
+    )
     return parser
+
+
+def _ui(args: argparse.Namespace) -> int:
+    from colibrimo_pipeline.ui.jobs import default_viewer_dir, ui_overrides
+    from colibrimo_pipeline.ui.server import serve
+
+    overrides = ui_overrides(parse_set_overrides(args.set))
+    load_config("balanced", overrides)  # fail now (exit 2) if --set is invalid
+    serve(
+        args.data,
+        overrides,
+        args.viewer or default_viewer_dir(),
+        port=args.port,
+        open_browser=not args.no_browser,
+    )
+    return 0
 
 
 def _overrides(args: argparse.Namespace) -> dict:
@@ -109,6 +155,8 @@ def _overrides(args: argparse.Namespace) -> dict:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.command == "ui":
+            return _ui(args)
         config = load_config(args.preset, _overrides(args))
         if args.command == "config":
             print(

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -131,9 +132,20 @@ class Manifest:
     # ---- persistence -------------------------------------------------------
 
     def save(self) -> None:
-        """Write atomically (temp file + rename) so a crash never leaves half a file."""
+        """Write atomically (temp file + rename) so a crash never leaves half a file.
+
+        On Windows the rename fails while another process/thread has the file
+        open (e.g. ``cpipe ui`` reading progress), so it is retried briefly.
+        """
         self.data["updated_at"] = now_iso()
         self.run_dir.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(self.data, indent=2, default=str), encoding="utf-8")
-        os.replace(tmp, self.path)
+        for attempt in range(20):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)

@@ -10,6 +10,7 @@ cpipe run --video data/videos/room1.mp4 --output data/runs/room1 --preset balanc
 cpipe run --video data/videos/room1.mp4 --output data/runs/room1 --until poses   # no GPU
 cpipe run --video bottom.mp4 --video middle.mp4 --video up.mp4 --output data/runs/room2  # several videos
 cpipe run --videos data/videos/room2 --output data/runs/room2 --set train.trainer=brush # train with Brush
+cpipe ui   # local web page: drop videos, Start, watch progress (developer tool, see D-016)
 pytest pipeline
 ```
 
@@ -24,6 +25,7 @@ Full guide (install, laptop + Colab workflow, presets, outputs, Docker, troubles
 | `colibrimo_pipeline/presets/` | `fast`, `balanced`, `quality` |
 | `colibrimo_pipeline/steps/` | `validate`, `extract_frames`, `poses`, `train`, `export` |
 | `colibrimo_pipeline/manifest.py` | `manifest.json` |
+| `colibrimo_pipeline/ui/` | `cpipe ui`: local web page (developer tool, replaced by the Step 5 backend) |
 | `notebooks/colab_run.ipynb` | run on a free Google Colab GPU |
 | `Dockerfile` | GPU image (not tested yet) |
 | `tests/` | pytest (CPU; FFmpeg tests skip if FFmpeg is missing) |
