@@ -2,7 +2,9 @@
 
 A room can be filmed as several videos (e.g. at three heights). Each video is
 checked on its own (readable, at most ``max_duration_s``); the minimum duration
-applies to all videos together.
+applies to all videos together. HDR video (iPhone HLG, or PQ) is detected from
+the main video stream's ``color_transfer`` and recorded, so ``extract_frames``
+can tone-map it to SDR.
 """
 
 from __future__ import annotations
@@ -21,9 +23,18 @@ from colibrimo_pipeline.utils.versions import ffmpeg_version
 NAME = "validate"
 
 
+# Transfer characteristics (ffprobe ``color_transfer``) of HDR video: HLG, used
+# by iPhones, and PQ (HDR10 / Dolby Vision profile 8.1 base layers).
+HDR_TRANSFERS = {"arib-std-b67": "HLG", "smpte2084": "PQ"}
+
+
 @dataclass
 class VideoInfo:
-    """Video metadata. ``width``/``height`` are as displayed (after phone rotation)."""
+    """Video metadata of the main video stream (the first one, ``0:v:0``).
+
+    ``width``/``height`` are as displayed (after phone rotation). ``hdr`` is
+    True for HLG or PQ video, which is tone-mapped to SDR when extracting frames.
+    """
 
     path: str
     duration_s: float
@@ -34,6 +45,13 @@ class VideoInfo:
     rotation: int
     size_bytes: int | None
     container: str | None
+    pix_fmt: str | None = None
+    color_transfer: str | None = None
+    color_primaries: str | None = None
+    color_space: str | None = None
+    hdr: bool = False
+    hdr_format: str | None = None  # "HLG" or "PQ"
+    num_streams: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -95,6 +113,7 @@ def parse_video_info(probe: dict[str, Any], video: Path) -> VideoInfo:
 
     duration = float(fmt.get("duration") or stream.get("duration") or 0)
     size = fmt.get("size")
+    transfer = stream.get("color_transfer")
     return VideoInfo(
         path=str(video),
         duration_s=round(duration, 3),
@@ -106,6 +125,13 @@ def parse_video_info(probe: dict[str, Any], video: Path) -> VideoInfo:
         rotation=rotation,
         size_bytes=int(size) if size else None,
         container=fmt.get("format_name"),
+        pix_fmt=stream.get("pix_fmt"),
+        color_transfer=transfer,
+        color_primaries=stream.get("color_primaries"),
+        color_space=stream.get("color_space"),
+        hdr=transfer in HDR_TRANSFERS,
+        hdr_format=HDR_TRANSFERS.get(transfer),
+        num_streams=len(probe.get("streams", [])),
     )
 
 
@@ -192,13 +218,19 @@ def run(ctx: StepContext) -> StepResult:
         ctx.logger.warning("Warning: %s", warning)
     for video, info in zip(ctx.videos, infos, strict=True):
         ctx.logger.info(
-            "Video '%s': %.1f s, %dx%d, %s fps, %s",
+            "Video '%s': %.1f s, %dx%d, %s fps, %s%s",
             video.name,
             info.duration_s,
             info.width,
             info.height,
             info.fps,
             info.codec,
+            (
+                f", HDR ({info.hdr_format}, {info.color_transfer}): frames will be "
+                "tone-mapped to SDR"
+                if info.hdr
+                else ""
+            ),
         )
 
     videos = [
@@ -215,6 +247,9 @@ def run(ctx: StepContext) -> StepResult:
             "num_videos": len(videos),
             "total_duration_s": round(sum(i.duration_s for i in infos), 3),
             "same_camera": same_camera(infos),
+            "hdr_videos": [
+                v.name for v, i in zip(ctx.videos, infos, strict=True) if i.hdr
+            ],
             "warnings": warnings,
         },
         versions={"ffprobe": ffmpeg_version(ffprobe)},

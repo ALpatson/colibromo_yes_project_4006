@@ -174,4 +174,21 @@ Option names checked with COLMAP 4.2.1's `sequential_matcher --help` (`Sequentia
 
 Both connect all three heights in one model. (Exhaustive wall-clock time was longer because the laptop slept for about an hour; the table excludes that pause.)
 
-**Consequences:** multi-video runs need internet the first time (vocabulary tree download). For comparison, COLMAP's own `automatic_reconstructor` (data type video, ~255 frames) took about 3 min on the same videos; it uses its own extraction/matching settings, which were not compared in detail. If `poses` stays the bottleneck, that comparison is the next thing to look at.
+**Consequences:** multi-video runs need internet the first time (vocabulary tree download).
+
+---
+
+## D-012 · Tone-map HDR videos (iPhone) to SDR when extracting frames · 2026-10-13
+
+**Context:** iPhones film in HDR by default (HEVC 10-bit, HLG transfer `arib-std-b67`, BT.2020, plus a Dolby Vision record). Extracted as is, the frames come out grey and washed out, and the splat inherits those colours. iPhone `.MOV` files also hold 2 audio and 6 data streams besides the video.
+
+**Decision:**
+- `validate` records each video's `pix_fmt`, `color_transfer`, `color_primaries`, `color_space` and flags it as HDR when the transfer is `arib-std-b67` (HLG) or `smpte2084` (PQ).
+- `extract_frames` always reads only the main video stream (`-map 0:v:0`) and, for HDR, inserts the chain that worked in manual tests between frame sampling and downscaling:
+  `zscale=tin=<transfer>:min=<matrix>:pin=<primaries>:t=linear:npl=100, format=gbrpf32le, zscale=p=bt709, tonemap=tonemap=hable:desat=0, zscale=t=bt709:m=bt709:r=tv, format=yuv420p`.
+  Transfer, matrix and primaries come from ffprobe (BT.2020 if missing). Settings: `frames.hdr_tonemap` (default `true`), `frames.tonemap` (`hable`), `frames.hdr_peak_nits` (100).
+- If the FFmpeg build lacks `zscale`/`tonemap` (they need libzimg), the step fails with a clear message instead of silently producing washed-out frames.
+
+**Verified (2026-10-13, FFmpeg 9.0.2 gyan.dev full build):** `room1.MOV` (iPhone 16, HLG, portrait) is detected as HDR; 12 frames extracted with and without tone-mapping. Tone-mapped frames have normal colours (red door, wood tables, white walls; mean saturation 68 vs 41, darker blacks: 1st percentile 14.5 vs 24.6). Portrait rotation is still applied (720x1280). A synthetic HLG-tagged clip covers this in the tests (skipped if FFmpeg lacks libx264 or zscale).
+
+**Consequences:** the setting is a boolean on purpose: YAML reads `off` as `false`, so an `auto`/`off` choice broke `--set frames.hdr_tonemap=off`. Tone-mapped colours are an approximation of what the phone shows (hable keeps highlights soft; white walls come out very slightly warm); `frames.tonemap=mobius` is an alternative if colours look off. For comparison, COLMAP's own `automatic_reconstructor` (data type video, ~255 frames) took about 3 min on the same videos; it uses its own extraction/matching settings, which were not compared in detail. If `poses` stays the bottleneck, that comparison is the next thing to look at.

@@ -1,7 +1,7 @@
 # Reconstruction pipeline (`cpipe`)
 
 Turns one or more phone videos of one room into a 3D Gaussian Splatting scene (`scene.ply`).
-Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-011).
+Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-012).
 
 ```
 video(s) ──validate──▶ extract_frames ──▶ poses ──▶ train ──▶ export ──▶ scene.ply
@@ -112,6 +112,22 @@ Film the room in several passes (e.g. three heights, see the
 
 - Long runs: keep the laptop plugged in and set Windows sleep to **Never** (Settings →
   System → Power), otherwise sleep pauses COLMAP.
+
+### HDR videos (iPhone)
+
+iPhones film in HDR (HLG) by default. `validate` detects HDR (`color_transfer` HLG
+`arib-std-b67` or PQ `smpte2084`; see `steps.validate.info.hdr_videos`) and
+`extract_frames` tone-maps those frames to normal SDR colours with FFmpeg's `zscale` +
+`tonemap` filters (decision D-012). Only the main video stream is read (`-map 0:v:0`).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `frames.hdr_tonemap` | `true` | `false` extracts HDR as is (washed-out colours) |
+| `frames.tonemap` | `hable` | tone-mapping curve (`hable`, `mobius`, `reinhard`, `clip`) |
+| `frames.hdr_peak_nits` | `100` | zscale `npl` when linearising |
+
+This needs an FFmpeg built with libzimg (the gyan.dev **full** build on Windows has it;
+check with `ffmpeg -filters | findstr zscale`).
 
 **Resumability:** a step is skipped if `manifest.json` says it succeeded and its outputs still
 exist. When a step re-runs, all later steps re-run too. Changing settings in an existing run
@@ -224,6 +240,7 @@ other things, that a 5 s video fails at `validate` and a static shot fails at `e
 | `The video is 5.0 s long, but at least 20 s is needed` | Film 1 to 3 minutes (capture guide). |
 | `The video looks static` | The camera must move through the room. |
 | `COLMAP placed only X of Y frames` | Capture problem (fast motion, blur, mirrors, low light, turning on the spot). Try `--set poses.matcher=exhaustive` (slower) or re-film. |
+| `HDR video ... needs FFmpeg's zscale ... filter(s)` | Install an FFmpeg build with libzimg (gyan.dev "full" on Windows), or `--set frames.hdr_tonemap=false` (washed-out colours). |
 | `Training needs an NVIDIA GPU with CUDA` | Run `--until poses` here and train on Colab. |
 | `gsplat's examples folder is not configured` | Set `GSPLAT_EXAMPLES_DIR` to `<gsplat checkout>/examples`. |
 | `No module named 'datasets.colmap'` or `OverflowError: ... out of bounds for uint64` | Fixed automatically by the `train` step (decisions D-009): gsplat v1.5.3's examples clash with Colab's `datasets` package and its pycolmap fork predates numpy 2. If you see them, the pipeline version is too old: reinstall it. |

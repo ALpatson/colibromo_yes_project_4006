@@ -80,6 +80,19 @@ class FramesConfig(_Section):
     keep_candidates: bool = Field(
         False, description="Keep all candidate frames on disk."
     )
+    hdr_tonemap: bool = Field(
+        True,
+        description="Tone-map HDR videos (HLG/PQ, e.g. iPhone) to SDR frames with "
+        "FFmpeg zscale + tonemap. false: extract as is (washed-out colours).",
+    )
+    tonemap: Literal["hable", "mobius", "reinhard", "clip"] = Field(
+        "hable", description="FFmpeg tonemap operator for HDR videos."
+    )
+    hdr_peak_nits: float = Field(
+        100.0,
+        gt=0,
+        description="zscale 'npl' (nominal peak luminance) when converting HDR to linear.",
+    )
 
 
 class PosesConfig(_Section):

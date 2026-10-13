@@ -11,6 +11,10 @@ Frames are named after their video and numbered in video order
 (``colmap/images/bottom_00000.jpg`` ...), so frames of one video stay together
 and in order (COLMAP's sequential matcher relies on that). ``frames.json``
 lists every frame with its source video and timestamp.
+
+HDR videos (HLG/PQ, detected by ``validate``) are tone-mapped to SDR BT.709
+with FFmpeg's zscale + tonemap filters (``frames.hdr_tonemap``); only the main
+video stream is read (``-map 0:v:0``).
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ from PIL import Image
 from colibrimo_pipeline.config import FramesConfig
 from colibrimo_pipeline.errors import StepError
 from colibrimo_pipeline.steps.base import CAPTURE_TIPS, StepContext, StepResult
-from colibrimo_pipeline.utils.proc import find_tool, run_tool
+from colibrimo_pipeline.utils.proc import find_tool, run_capture, run_tool
 from colibrimo_pipeline.utils.versions import ffmpeg_version
 from colibrimo_pipeline.utils.videos import video_name
 
@@ -115,6 +119,49 @@ def scale_filter(max_long_side: int) -> str:
     )
 
 
+def tonemap_filter(video: dict[str, Any], cfg: FramesConfig) -> str:
+    """FFmpeg filters converting an HDR (HLG/PQ) video to SDR BT.709.
+
+    zscale linearises the HDR signal (input transfer, matrix and primaries from
+    ffprobe), converts the primaries to BT.709, ``tonemap`` compresses the
+    highlights, and zscale encodes BT.709 again. Without this, HDR frames come
+    out grey and washed out.
+    """
+    transfer = video["color_transfer"]
+    matrix = video.get("color_space") or "bt2020nc"
+    primaries = video.get("color_primaries") or "bt2020"
+    return (
+        f"zscale=tin={transfer}:min={matrix}:pin={primaries}:t=linear"
+        f":npl={cfg.hdr_peak_nits:g},format=gbrpf32le,zscale=p=bt709,"
+        f"tonemap=tonemap={cfg.tonemap}:desat=0,"
+        "zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
+    )
+
+
+def needs_tonemap(video: dict[str, Any], cfg: FramesConfig) -> bool:
+    return bool(video.get("hdr")) and cfg.hdr_tonemap
+
+
+def video_filter(video: dict[str, Any], fps: float, cfg: FramesConfig) -> str:
+    """Full -vf chain: sample frames, tone-map if HDR, downscale."""
+    parts = [f"fps={fps:.6f}"]
+    if needs_tonemap(video, cfg):
+        parts.append(tonemap_filter(video, cfg))
+    parts.append(scale_filter(cfg.max_long_side))
+    return ",".join(parts)
+
+
+def missing_filters(ffmpeg: str, names: Sequence[str]) -> list[str]:
+    """Which of these FFmpeg filters this build lacks (zscale needs libzimg)."""
+    result = run_capture([ffmpeg, "-hide_banner", "-filters"])
+    available = {
+        parts[1]
+        for line in result.stdout.splitlines()
+        if len(parts := line.split()) >= 2
+    }
+    return [name for name in names if name not in available]
+
+
 def videos_from_manifest(ctx: StepContext) -> list[dict[str, Any]]:
     """Video metadata recorded by ``validate`` (one dict per video, with ``name``)."""
     info = ctx.manifest.step_info("validate")
@@ -128,13 +175,17 @@ def videos_from_manifest(ctx: StepContext) -> list[dict[str, Any]]:
 
 def extract_candidates(
     ffmpeg: str,
-    video: Path,
+    video: dict[str, Any],
     out_dir: Path,
     fps: float,
     cfg: FramesConfig,
     ctx: StepContext,
 ) -> list[Path]:
-    """Extract evenly spaced frames (``fps`` per second) as candidate JPEGs."""
+    """Extract evenly spaced frames (``fps`` per second) as candidate JPEGs.
+
+    Only the main video stream is used (``-map 0:v:0``): iPhone files also hold
+    audio and several metadata streams.
+    """
     run_tool(
         [
             ffmpeg,
@@ -143,9 +194,11 @@ def extract_candidates(
             "-loglevel",
             "error",
             "-i",
-            video,
+            video["path"],
+            "-map",
+            "0:v:0",
             "-vf",
-            f"fps={fps:.6f},{scale_filter(cfg.max_long_side)}",
+            video_filter(video, fps, cfg),
             "-q:v",
             str(cfg.jpeg_quality),
             "-start_number",
@@ -169,6 +222,23 @@ def run(ctx: StepContext) -> StepResult:
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True)
 
+    hdr_names = [v["name"] for v in videos if needs_tonemap(v, cfg)]
+    if hdr_names:
+        missing = missing_filters(ffmpeg, ["zscale", "tonemap"])
+        if missing:
+            raise StepError(
+                NAME,
+                f"HDR video ({', '.join(hdr_names)}) needs FFmpeg's {' and '.join(missing)} "
+                "filter(s) to get normal colours, but this FFmpeg build lacks them. "
+                "Install a full build (e.g. gyan.dev 'full', or a Linux build with "
+                "libzimg), or set frames.hdr_tonemap=false to extract without tone-mapping.",
+            )
+    elif any(v.get("hdr") for v in videos):
+        ctx.logger.warning(
+            "Warning: HDR video extracted without tone-mapping (frames.hdr_tonemap=false): "
+            "colours will look washed out."
+        )
+
     counts = split_frame_counts(
         [float(v["duration_s"]) for v in videos], cfg.target_count, cfg.min_per_video
     )
@@ -181,18 +251,22 @@ def run(ctx: StepContext) -> StepResult:
         n_wanted = math.ceil(count * cfg.oversample) if cfg.blur_filter else count
         fps = n_wanted / duration
         label = f"'{name}'" if len(videos) > 1 else "the video"
+        tonemapped = needs_tonemap(video, cfg)
         ctx.logger.info(
-            "Extracting about %d candidate frames from %s (%.3f per second) to keep %d...",
+            "Extracting about %d candidate frames from %s (%.3f per second) to keep %d%s...",
             n_wanted,
             label,
             fps,
             count,
+            (
+                f", tone-mapping {video.get('hdr_format')} HDR to SDR"
+                if tonemapped
+                else ""
+            ),
         )
         candidates_dir = candidates_root / name
         candidates_dir.mkdir()
-        candidates = extract_candidates(
-            ffmpeg, Path(video["path"]), candidates_dir, fps, cfg, ctx
-        )
+        candidates = extract_candidates(ffmpeg, video, candidates_dir, fps, cfg, ctx)
         if not candidates:
             raise StepError(NAME, f"FFmpeg produced no frames from {label}.")
 
@@ -236,6 +310,8 @@ def run(ctx: StepContext) -> StepResult:
                 "last_frame": f"{name}_{len(selected) - 1:05d}.jpg",
                 "extraction_fps": round(fps, 4),
                 "motion_score": round(motion, 2),
+                "hdr": bool(video.get("hdr")),
+                "tonemapped": tonemapped,
             }
         )
         ctx.logger.info(
