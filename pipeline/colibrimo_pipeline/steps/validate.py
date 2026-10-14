@@ -190,12 +190,22 @@ def check_videos(infos: list[VideoInfo], cfg: ValidationConfig) -> list[str]:
             "for 1 to 3 minutes, walking slowly around it (see docs/capture-guide.md).",
         )
     if several and len({(i.width, i.height) for i in infos}) > 1:
+        orientations = {orientation(i) for i in infos}
+        listing = ", ".join(
+            f"{Path(i.path).name} {orientation(i)} {i.width}x{i.height}" for i in infos
+        )
+        what = "orientations" if len(orientations) > 1 else "resolutions"
         warnings.append(
-            "The videos have different resolutions or orientations; each video gets "
-            "its own camera model in COLMAP. Film all passes with the same settings "
-            "if possible."
+            f"The videos have different {what} ({listing}). Each video gets its own "
+            "camera model, which makes the reconstruction weaker. Film all passes the "
+            "same way: same orientation (landscape recommended), resolution and zoom."
         )
     return warnings
+
+
+def orientation(info: VideoInfo) -> str:
+    """'landscape' or 'portrait', as displayed (after the phone's rotation)."""
+    return "portrait" if info.height > info.width else "landscape"
 
 
 def same_camera(infos: list[VideoInfo]) -> bool:

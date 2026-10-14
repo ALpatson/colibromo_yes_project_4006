@@ -20,11 +20,13 @@ Output layout (what gsplat's trainer expects)::
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from colibrimo_pipeline.config import PosesConfig
 from colibrimo_pipeline.errors import StepError
@@ -124,6 +126,19 @@ def choose_matcher(cfg: PosesConfig, num_videos: int) -> MatcherChoice:
     )
 
 
+def frames_by_video(run_dir: Path, images_dir: Path) -> dict[str, list[str]]:
+    """Frame file names per video, in order (frames.json, else the frame name prefix)."""
+    groups: dict[str, list[str]] = {}
+    frames_file = run_dir / "frames.json"
+    if frames_file.is_file():
+        for frame in json.loads(frames_file.read_text(encoding="utf-8"))["frames"]:
+            groups.setdefault(frame["video"], []).append(frame["file"])
+    else:
+        for image in sorted(images_dir.glob("*.jpg")):
+            groups.setdefault(image.name.rsplit("_", 1)[0], []).append(image.name)
+    return groups
+
+
 def run(ctx: StepContext) -> StepResult:
     cfg = ctx.config.poses
     colmap = Colmap(find_tool("colmap"), ctx.logger)
@@ -145,33 +160,58 @@ def run(ctx: StepContext) -> StepResult:
     num_images = len(list(images_dir.glob("*.jpg")))
     use_gpu = 1 if cfg.use_gpu else 0
 
-    ctx.logger.info("COLMAP 1/3: detecting features in %d frames...", num_images)
-    args: list[str] = [
-        "--database_path",
-        str(database),
-        "--image_path",
-        str(images_dir),
-        "--ImageReader.camera_model",
-        cfg.camera_model,
-        # One shared camera when all videos have the same resolution (same phone
-        # settings); otherwise one camera per frame.
-        "--ImageReader.single_camera",
-        "1" if single_camera else "0",
-    ]
+    # Camera models (intrinsics: focal length, distortion). All videos with the
+    # same resolution/orientation: one shared camera (same phone settings).
+    # Otherwise one camera per video, by extracting each video's frames in a
+    # separate run with its own image list (D-017). Never one camera per frame:
+    # 300 unknown focal lengths made NewRoom fall apart.
+    groups = (
+        {"all": None} if single_camera else frames_by_video(ctx.run_dir, images_dir)
+    )
+    ctx.logger.info(
+        "COLMAP 1/3: detecting features in %d frames (%s)...",
+        num_images,
+        (
+            "one shared camera"
+            if single_camera
+            else f"one camera per video: {len(groups)}"
+        ),
+    )
     command = "feature_extractor"
-    colmap.add_option(
-        args, command, ["FeatureExtraction.use_gpu", "SiftExtraction.use_gpu"], use_gpu
-    )
-    colmap.add_option(
-        args,
-        command,
-        ["FeatureExtraction.num_threads", "SiftExtraction.num_threads"],
-        cfg.num_threads,
-    )
-    colmap.add_option(
-        args, command, ["SiftExtraction.max_num_features"], cfg.max_num_features
-    )
-    colmap.run(command, args)
+    lists_dir = colmap_dir / "image_lists"
+    shutil.rmtree(lists_dir, ignore_errors=True)
+    for video, frames in groups.items():
+        args: list[str] = [
+            "--database_path",
+            str(database),
+            "--image_path",
+            str(images_dir),
+            "--ImageReader.camera_model",
+            cfg.camera_model,
+            "--ImageReader.single_camera",
+            "1",
+        ]
+        if frames is not None:
+            lists_dir.mkdir(exist_ok=True)
+            image_list = lists_dir / f"{video}.txt"
+            image_list.write_text("\n".join(frames) + "\n", encoding="utf-8")
+            colmap.require_option(args, command, "image_list_path", image_list)
+        colmap.add_option(
+            args,
+            command,
+            ["FeatureExtraction.use_gpu", "SiftExtraction.use_gpu"],
+            use_gpu,
+        )
+        colmap.add_option(
+            args,
+            command,
+            ["FeatureExtraction.num_threads", "SiftExtraction.num_threads"],
+            cfg.num_threads,
+        )
+        colmap.add_option(
+            args, command, ["SiftExtraction.max_num_features"], cfg.max_num_features
+        )
+        colmap.run(command, args)
 
     choice = choose_matcher(cfg, num_videos)
     ctx.logger.info(
@@ -252,6 +292,7 @@ def run(ctx: StepContext) -> StepResult:
         "matcher_reason": choice.reason,
         "num_videos": num_videos,
         "single_camera": single_camera,
+        "num_cameras": 1 if single_camera else len(groups),
         "camera_model": cfg.camera_model,
     }
     ctx.logger.info(

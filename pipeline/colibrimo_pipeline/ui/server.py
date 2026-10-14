@@ -12,6 +12,7 @@ Routes::
     PUT  /api/upload?room=&file= one video, raw body (streamed to data/uploads/<room>/)
     POST /api/start              {"room", "preset"}
     POST /api/resume             {"room"}
+    POST /api/label              {"room", "file", "label": "bottom"|"middle"|"up"|""}
     POST /api/open-viewer        {"room"} -> {"url"}
 """
 
@@ -38,8 +39,11 @@ from colibrimo_pipeline.ui.jobs import (
     copy_to_viewer,
     list_rooms,
     list_videos,
+    read_labels,
     read_progress,
     save_upload,
+    set_label,
+    video_details,
     viewer_running,
 )
 
@@ -84,12 +88,22 @@ class App:
         }
         if room:
             room = clean_room_name(room)
+            labels = read_labels(runner.uploads_dir, room)
+            videos = [
+                {
+                    "name": v.name,
+                    "size": v.stat().st_size,
+                    "label": labels.get(v.name, ""),
+                    "details": video_details(v),
+                }
+                for v in list_videos(runner.uploads_dir, room)
+            ]
+            orientations = {v["details"]["orientation"] for v in videos if v["details"]}
             data["room"] = {
                 "name": room,
-                "videos": [
-                    {"name": v.name, "size": v.stat().st_size}
-                    for v in list_videos(runner.uploads_dir, room)
-                ],
+                "videos": videos,
+                "mixed_orientation": len(orientations) > 1,
+                "missing_middle": bool(videos) and "middle" not in labels.values(),
                 "progress": read_progress(runner.run_dir(room)),
                 "error": runner.errors.get(room),
             }
@@ -234,6 +248,14 @@ class Handler(BaseHTTPRequestHandler):
             elif route == "/api/resume":
                 runner.resume(str(body.get("room", "")))
                 self._json({"started": True})
+            elif route == "/api/label":
+                labels = set_label(
+                    runner.uploads_dir,
+                    str(body.get("room", "")),
+                    str(body.get("file", "")),
+                    str(body.get("label", "")),
+                )
+                self._json({"labels": labels})
             elif route == "/api/open-viewer":
                 if self.app.viewer_dir is None:
                     raise UserError(

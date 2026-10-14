@@ -124,7 +124,9 @@ def test_different_resolutions_warn():
     warnings = check_videos(
         [info("a.mp4"), info("b.mp4", width=1080, height=1920)], ValidationConfig()
     )
-    assert any("different resolutions" in w for w in warnings)
+    assert any("different orientations" in w for w in warnings)
+    assert any("b.mp4 portrait 1080x1920" in w for w in warnings)
+    assert any("landscape recommended" in w for w in warnings)
 
 
 # ---- matcher choice -------------------------------------------------------------

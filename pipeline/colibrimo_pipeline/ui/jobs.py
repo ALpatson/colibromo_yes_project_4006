@@ -22,8 +22,14 @@ from colibrimo_pipeline.config import deep_merge, load_config
 from colibrimo_pipeline.errors import PipelineError, StepError, ToolNotFoundError
 from colibrimo_pipeline.pipeline import STEP_NAMES, run_pipeline
 from colibrimo_pipeline.steps._brush import parse_progress
+from colibrimo_pipeline.steps.validate import parse_video_info, probe_video
 from colibrimo_pipeline.utils.proc import find_tool, run_capture
-from colibrimo_pipeline.utils.videos import VIDEO_EXTENSIONS, video_name
+from colibrimo_pipeline.utils.videos import (
+    VIDEO_EXTENSIONS,
+    VideoInput,
+    collect_videos,
+    video_name,
+)
 
 PRESETS = ["fast", "balanced", "quality"]
 VIEWER_URL = "http://localhost:5173/"
@@ -114,6 +120,92 @@ def list_videos(uploads_dir: Path, room: str) -> list[Path]:
     )
 
 
+# ---- labels (bottom / middle / up) and video details ---------------------------------
+
+LABELS = ("bottom", "middle", "up")
+LABELS_FILE = "labels.json"
+
+
+def default_label(filename: str) -> str:
+    """'middle_take2.mp4' -> 'middle'; '' when the name says nothing."""
+    words = re.split(r"[^a-z]+", Path(filename).stem.lower())
+    return next((label for label in LABELS if label in words), "")
+
+
+def read_labels(uploads_dir: Path, room: str) -> dict[str, str]:
+    """Label of each uploaded video: saved in labels.json, else from the file name.
+
+    A room with a single video defaults to "middle" (its cameras then give the
+    viewer's eye height); a label saved explicitly, even "none", wins.
+    """
+    saved: dict[str, str] = {}
+    path = Path(uploads_dir) / room / LABELS_FILE
+    if path.is_file():
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            saved = {}
+    videos = list_videos(uploads_dir, room)
+    single = len(videos) == 1
+    return {
+        v.name: saved.get(v.name, default_label(v.name) or ("middle" if single else ""))
+        for v in videos
+    }
+
+
+def set_label(
+    uploads_dir: Path, room: str, filename: str, label: str
+) -> dict[str, str]:
+    """Label one video as bottom / middle / up ('' = none); each label at most once."""
+    room = clean_room_name(room)
+    labels = read_labels(uploads_dir, room)
+    if filename not in labels:
+        raise UserError(f"No video '{filename}' in room '{room}'.")
+    if label not in ("", *LABELS):
+        raise UserError(f"Label must be one of {', '.join(LABELS)} (or none).")
+    if label and any(f != filename and lab == label for f, lab in labels.items()):
+        raise UserError(f"Another video is already labelled '{label}'.")
+    labels[filename] = label
+    path = Path(uploads_dir) / room / LABELS_FILE
+    path.write_text(json.dumps(labels, indent=1), encoding="utf-8")
+    return labels
+
+
+def named_videos(uploads_dir: Path, room: str) -> list[VideoInput]:
+    """The room's videos with their run names: the label, else the file name."""
+    labels = read_labels(uploads_dir, room)
+    return collect_videos(
+        [
+            VideoInput(labels[v.name] or video_name(v), v)
+            for v in list_videos(uploads_dir, room)
+        ]
+    )
+
+
+_DETAILS_CACHE: dict[tuple[str, float, int], dict[str, Any]] = {}
+
+
+def video_details(path: Path) -> dict[str, Any] | None:
+    """Resolution, orientation, duration, fps, codec, HDR (ffprobe; cached per file)."""
+    stat = path.stat()
+    key = (str(path), stat.st_mtime, stat.st_size)
+    if key not in _DETAILS_CACHE:
+        try:
+            info = parse_video_info(probe_video(find_tool("ffprobe"), path), path)
+        except PipelineError:
+            return None
+        _DETAILS_CACHE[key] = {
+            "width": info.width,
+            "height": info.height,
+            "orientation": "portrait" if info.height > info.width else "landscape",
+            "duration_s": info.duration_s,
+            "fps": info.fps,
+            "codec": info.codec,
+            "hdr": info.hdr,
+        }
+    return _DETAILS_CACHE[key]
+
+
 def list_rooms(data_dir: Path) -> list[str]:
     """Rooms that have uploads or a run folder."""
     names: set[str] = set()
@@ -199,6 +291,7 @@ def read_progress(run_dir: Path) -> dict[str, Any] | None:
         "status": manifest.get("status"),
         "error": manifest.get("error"),
         "preset": manifest.get("config", {}).get("preset"),
+        "warnings": recorded.get("validate", {}).get("info", {}).get("warnings", []),
         "steps": steps,
         "brush": brush,
         "result": result,
@@ -246,14 +339,28 @@ class Runner:
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, room: str, preset: str) -> None:
+    def inputs_changed(self, room: str, videos: list[VideoInput]) -> bool:
+        """Do the room's videos or labels differ from its last run?"""
+        previous = (read_manifest(self.run_dir(room)) or {}).get("input", {})
+        if not previous:
+            return False
+        same_paths = [str(Path(p).resolve()) for p in previous.get("videos", [])] == [
+            str(v.path) for v in videos
+        ]
+        same_names = previous.get("names") in (None, [v.name for v in videos])
+        return not (same_paths and same_names)
+
+    def start(self, room: str, preset: str, resume: bool = False) -> None:
+        """Run the room. A new Start with other videos/labels than the last run
+        starts from scratch (old frames carry the old names); Resume reuses steps."""
         room = clean_room_name(room)
         if preset not in PRESETS:
             raise UserError(f"Unknown preset '{preset}': use one of {PRESETS}.")
-        videos = list_videos(self.uploads_dir, room)
-        if not videos:
+        if not list_videos(self.uploads_dir, room):
             raise UserError(f"No videos uploaded for '{room}' yet.")
+        videos = named_videos(self.uploads_dir, room)  # ConfigError on clashing names
         config = load_config(preset, self.overrides)  # ConfigError if --set is wrong
+        force = not resume and self.inputs_changed(room, videos)
 
         with self._lock:
             if self.running:
@@ -263,7 +370,7 @@ class Runner:
             self.room = room
             self.errors.pop(room, None)
             self._thread = threading.Thread(
-                target=self._run, args=(room, videos, config), daemon=True
+                target=self._run, args=(room, videos, config, force), daemon=True
             )
             self._thread.start()
 
@@ -272,11 +379,11 @@ class Runner:
         room = clean_room_name(room)
         manifest = read_manifest(self.run_dir(room)) or {}
         preset = manifest.get("config", {}).get("preset") or "balanced"
-        self.start(room, preset if preset in PRESETS else "balanced")
+        self.start(room, preset if preset in PRESETS else "balanced", resume=True)
 
-    def _run(self, room: str, videos: list[Path], config) -> None:
+    def _run(self, room: str, videos: list[VideoInput], config, force: bool) -> None:
         try:
-            self.run_fn(videos, self.run_dir(room), config)
+            self.run_fn(videos, self.run_dir(room), config, force=force)
         except StepError:
             pass  # recorded in manifest.json (status, failing step, message)
         except Exception as exc:  # e.g. a tool not found before any step started

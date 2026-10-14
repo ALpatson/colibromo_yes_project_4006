@@ -1,7 +1,7 @@
 # Reconstruction pipeline (`cpipe`)
 
 Turns one or more phone videos of one room into a 3D Gaussian Splatting scene (`scene.ply`).
-Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-014).
+Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-017).
 
 ```
 video(s) ──validate──▶ extract_frames ──▶ poses ──▶ train ──▶ export ──▶ scene.ply
@@ -13,7 +13,7 @@ video(s) ──validate──▶ extract_frames ──▶ poses ──▶ train 
 |---|---|---|
 | `validate` | Reads each video with ffprobe. Fails if all videos together are shorter than 20 s or one video is longer than 5 min; warns below 1080p. | any machine |
 | `extract_frames` | Shares the target frame count between the videos by duration. Per video: extracts 2x its share with FFmpeg, keeps the sharpest frame of each group, downscales. Fails if a video looks static. | any machine |
-| `poses` | COLMAP: feature extraction, matching (sequential for one video, sequential + loop detection for several), mapper. Keeps the largest model (others go to `colmap/unused_models/`). Fails if fewer than 70% of frames are registered. | any machine (CPU, or GPU with a CUDA build) |
+| `poses` | COLMAP: feature extraction (one shared camera model, or one per video if the videos differ in resolution/orientation, D-017), matching (sequential for one video, sequential + loop detection for several), mapper. Keeps the largest model (others go to `colmap/unused_models/`). Fails if fewer than 70% of frames are registered. | any machine (CPU, or GPU with a CUDA build) |
 | `train` | `train.trainer: gsplat` (default): gsplat `simple_trainer.py` (headless, seed 42). `train.trainer: brush`: Brush (headless, seed 42). | gsplat: **Linux + NVIDIA GPU**; Brush: **any GPU, Windows too** |
 | `export` | Copies the trained splat to `scene.ply`, writes `cameras.json` (camera poses for the viewer), records the scene transform in the manifest. | any machine |
 
@@ -188,8 +188,11 @@ $env:CPIPE_BRUSH  = "C:\Users\JOSEPHINE\Downloads\brush-app-x86_64-pc-windows-ms
 cpipe ui            # opens http://127.0.0.1:8765/ in the browser; Ctrl+C to stop
 ```
 
-On the page: type a **room name**, drop the room's videos (one per height), pick a
-**preset** and press **Start**. Videos go to `data/uploads/<room>/`, the run to
+On the page: type a **room name**, drop the room's videos (one per height), **label each
+one bottom / middle / up** (the label defaults from the file name; the viewer takes the eye
+height from "middle"), pick a **preset** and press **Start**. Each video shows its
+orientation, resolution, fps and codec, with a warning if portrait and landscape are mixed.
+Changing a room's videos or labels makes the next Start a fresh run. Videos go to `data/uploads/<room>/`, the run to
 `data/runs/<room>/`. The page shows each step's status (from `manifest.json`) and, during
 training, Brush's step and splat count. If a step fails, its error appears with a **Resume**
 button (finished steps are skipped). At the end it shows the training time, splats and file

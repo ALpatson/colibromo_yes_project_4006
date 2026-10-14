@@ -49,6 +49,15 @@ def _warn_if_inputs_changed(
         )
     previous_names = [Path(p).name for p in previous]
     current_names = [v.path.name for v in videos]
+    if previous_input.get("names") and previous_input["names"] != [
+        v.name for v in videos
+    ]:
+        logger.warning(
+            "Warning: the video names changed (%s -> %s). Use --force to re-extract "
+            "the frames under the new names.",
+            ", ".join(previous_input["names"]),
+            ", ".join(v.name for v in videos),
+        )
     if previous_names and previous_names != current_names:
         logger.warning(
             "Warning: this folder was used for %s before; now %s. "
@@ -127,7 +136,10 @@ def run_pipeline(
         manifest.set_run_info(
             pipeline_version=pipeline_version(),
             git_commit=git_commit(),
-            input={"videos": [str(v.path) for v in inputs]},
+            input={
+                "videos": [str(v.path) for v in inputs],
+                "names": [v.name for v in inputs],
+            },
             config=config.model_dump(mode="json"),
             system=system_info(),
         )

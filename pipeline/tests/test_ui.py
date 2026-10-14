@@ -16,10 +16,14 @@ from colibrimo_pipeline.ui.jobs import (
     clean_room_name,
     clean_video_filename,
     copy_to_viewer,
+    default_label,
     list_rooms,
     list_videos,
+    named_videos,
+    read_labels,
     read_progress,
     save_upload,
+    set_label,
     ui_overrides,
 )
 from colibrimo_pipeline.ui.server import App, make_server
@@ -191,26 +195,33 @@ class FakePipeline:
 
     def __init__(self, fail_first=False):
         self.calls = []
+        self.forces = []
         self.release = threading.Event()
         self.release.set()
         self.fail_first = fail_first
 
-    def __call__(self, videos, run_dir, config):
+    def __call__(self, videos, run_dir, config, force=False):
         self.calls.append((list(videos), Path(run_dir), config.preset))
+        self.forces.append(force)
         self.release.wait(30)
+        # Like run_pipeline, which records the config and the input videos.
+        recorded = {
+            "preset": config.preset,
+            "input": {
+                "videos": [str(v.path) for v in videos],
+                "names": [v.name for v in videos],
+            },
+        }
         if self.fail_first and len(self.calls) == 1:
             write_manifest(
                 run_dir,
                 {"poses": {"status": "failed", "error": "COLMAP placed 10%"}},
                 status="failed",
-                preset=config.preset,  # like run_pipeline, which records the config
+                **recorded,
             )
             raise StepError("poses", "COLMAP placed 10%")
         write_manifest(
-            run_dir,
-            {"export": {"status": "succeeded"}},
-            status="succeeded",
-            preset=config.preset,
+            run_dir, {"export": {"status": "succeeded"}}, status="succeeded", **recorded
         )
 
 
@@ -228,7 +239,8 @@ def test_start_runs_pipeline_with_room_videos(tmp_path):
     runner.start("kitchen", "fast")
     runner.wait(30)
     videos, run_dir, preset = fake.calls[0]
-    assert [v.name for v in videos] == ["bottom.mp4", "middle.mp4"]
+    assert [v.path.name for v in videos] == ["bottom.mp4", "middle.mp4"]
+    assert [v.name for v in videos] == ["bottom", "middle"]
     assert run_dir == tmp_path / "runs" / "kitchen"
     assert preset == "fast"
     assert read_progress(run_dir)["status"] == "succeeded"
@@ -275,13 +287,92 @@ def test_start_without_videos_or_bad_preset(tmp_path):
 
 
 def test_unexpected_error_is_kept_for_the_page(tmp_path):
-    def broken(videos, run_dir, config):
+    def broken(videos, run_dir, config, force=False):
         raise RuntimeError("colmap not found")
 
     runner = runner_with_videos(tmp_path, broken)
     runner.start("kitchen", "fast")
     runner.wait(30)
     assert runner.errors["kitchen"] == "colmap not found"
+
+
+# ---- labels (bottom / middle / up) ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name, label",
+    [
+        ("middle.mp4", "middle"),
+        ("Middle_take2.MOV", "middle"),
+        ("room-UP.mp4", "up"),
+        ("bottom.mp4", "bottom"),
+        ("20261014_105445.mp4", ""),
+        ("upstairs.mp4", ""),  # whole words only
+    ],
+)
+def test_default_label_from_file_name(name, label):
+    assert default_label(name) == label
+
+
+def dated_room(tmp_path, names=("20261014_105445.mp4", "20261014_105641.mp4")):
+    folder = tmp_path / "uploads" / "NewRoom"
+    folder.mkdir(parents=True)
+    for name in names:
+        (folder / name).write_bytes(b"v")
+    return tmp_path / "uploads"
+
+
+def test_labels_name_the_videos_without_renaming_files(tmp_path):
+    uploads = dated_room(tmp_path)
+    assert read_labels(uploads, "NewRoom") == {
+        "20261014_105445.mp4": "",
+        "20261014_105641.mp4": "",
+    }
+    set_label(uploads, "NewRoom", "20261014_105641.mp4", "middle")
+    videos = named_videos(uploads, "NewRoom")
+    assert [(v.name, v.path.name) for v in videos] == [
+        ("20261014_105445", "20261014_105445.mp4"),
+        ("middle", "20261014_105641.mp4"),
+    ]
+    assert (uploads / "NewRoom" / "20261014_105641.mp4").is_file()  # file kept
+
+
+def test_single_video_defaults_to_middle(tmp_path):
+    uploads = dated_room(tmp_path, names=("room1.mov",))
+    assert read_labels(uploads, "NewRoom") == {"room1.mov": "middle"}
+    assert [v.name for v in named_videos(uploads, "NewRoom")] == ["middle"]
+    set_label(uploads, "NewRoom", "room1.mov", "")  # an explicit "none" is kept
+    assert read_labels(uploads, "NewRoom") == {"room1.mov": ""}
+
+
+def test_each_label_only_once_and_valid(tmp_path):
+    uploads = dated_room(tmp_path)
+    set_label(uploads, "NewRoom", "20261014_105445.mp4", "middle")
+    with pytest.raises(UserError, match="already labelled 'middle'"):
+        set_label(uploads, "NewRoom", "20261014_105641.mp4", "middle")
+    with pytest.raises(UserError, match="Label must be"):
+        set_label(uploads, "NewRoom", "20261014_105641.mp4", "top")
+    with pytest.raises(UserError, match="No video"):
+        set_label(uploads, "NewRoom", "other.mp4", "up")
+    set_label(uploads, "NewRoom", "20261014_105445.mp4", "")  # remove a label
+    assert read_labels(uploads, "NewRoom")["20261014_105445.mp4"] == ""
+
+
+def test_new_labels_start_a_fresh_run_but_resume_reuses_steps(tmp_path):
+    uploads = dated_room(tmp_path)
+    fake = FakePipeline()
+    runner = Runner(tmp_path, run_fn=fake)
+    runner.start("NewRoom", "fast")
+    runner.wait(30)
+    runner.start("NewRoom", "fast")  # same videos and names: reuse finished steps
+    runner.wait(30)
+    set_label(uploads, "NewRoom", "20261014_105641.mp4", "middle")
+    runner.start("NewRoom", "fast")  # names changed: re-extract frames
+    runner.wait(30)
+    runner.resume("NewRoom")
+    runner.wait(30)
+    assert fake.forces == [False, False, True, False]
+    assert [v.name for v in fake.calls[2][0]] == ["20261014_105445", "middle"]
 
 
 def test_ui_overrides():
@@ -383,8 +474,21 @@ def test_upload_then_state_then_start(server):
     status, body = request(port, "GET", "/api/state?room=my_room")
     state = json.loads(body)
     assert state["rooms"] == ["my_room"]
-    assert state["room"]["videos"] == [{"name": "bottom.mp4", "size": 1000}]
+    # Not a real video, so ffprobe gives no details; label from the file name.
+    assert state["room"]["videos"] == [
+        {"name": "bottom.mp4", "size": 1000, "label": "bottom", "details": None}
+    ]
+    assert state["room"]["missing_middle"] is True
+    assert state["room"]["mixed_orientation"] is False
     assert state["room"]["progress"] is None
+
+    status, body = request(
+        port,
+        "POST",
+        "/api/label",
+        body=json.dumps({"room": "my_room", "file": "bottom.mp4", "label": "middle"}),
+    )
+    assert status == 200 and json.loads(body)["labels"] == {"bottom.mp4": "middle"}
 
     status, body = request(
         port,

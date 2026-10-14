@@ -248,4 +248,27 @@ Both connect all three heights in one model. (Exhaustive wall-clock time was lon
 - "Open in viewer" copies `scene.ply` + `cameras.json` into the viewer prototype's `public/runs/<room>/` (`--viewer`, `CPIPE_VIEWER_DIR`, or `~/3DViewing`) and opens `http://localhost:5173/?run=runs/<room>`.
 - `Manifest.save()` now retries its atomic rename briefly: on Windows it fails while another reader (this page) has `manifest.json` open.
 
+**Update 2026-10-14:** each uploaded video can be labelled bottom / middle / up on the page (default from the file name, e.g. `middle_take2.mp4`; saved in `uploads/<room>/labels.json`, files are not renamed). The label becomes the video's name in the run (`run_pipeline()` accepts named videos), so frames, `cameras.json` and the viewer's eye height (`middle`) work for files named by date. Changing the videos or labels of a room makes the next **Start** a fresh run (`force`), because the old frames carry the old names; **Resume** still reuses finished steps. The page shows each video's resolution/orientation/fps/codec and warns about mixed orientations and a missing "middle".
+
 **Consequences:** **Step 5 replaces this tool** (uploads from the phone, jobs in a queue, storage, several users); nothing in the backend should build on it. No cancel button (stop the server with Ctrl+C; a running Brush process may need ending in Task Manager). Runs stop if the laptop sleeps or the server is closed; they can be resumed.
+
+---
+
+## D-017 · One COLMAP camera per video when the videos differ (never one per frame) · 2026-10-14
+
+**Context:** D-010 used one shared camera when all videos have the same resolution/orientation, and otherwise `ImageReader.single_camera=0`, i.e. **one camera model per frame** (300 unknown focal lengths instead of a few), which is wrong in principle. It showed up in the NewRoom run (Samsung, two portrait passes + one landscape, 300 frames): 68 of 300 frames placed (23%), 5 models split along the walk (not by video), as many camera models as frames, and repeated "Matrix not positive definite" warnings in the mapper. The camera setting was suspected, but the measurements below show it was **not** the cause of that failure.
+
+**Decision:** when the videos differ, `poses` runs COLMAP's `feature_extractor` once per video, with `--image_list_path` (that video's frames, from `frames.json`, written to `colmap/image_lists/<video>.txt`) and `ImageReader.single_camera 1`: one camera per video. Frames stay in the flat `colmap/images/` folder, so gsplat, Brush and `cameras.json` are unaffected (`ImageReader.single_camera_per_folder` would have needed sub-folders). Same-looking videos keep one shared camera. Never one camera per frame. `validate` now names each video's orientation and resolution in its warning and recommends filming all passes the same way (landscape); `cpipe ui` shows it before the run.
+
+**Measured on NewRoom (2026-10-14, COLMAP 4.2.1 CUDA, T500, `balanced`, 300 frames):**
+
+| Run | Cameras | Matcher | Frames placed | Models (sizes) |
+|---|---|---|---|---|
+| 3 videos, before (one camera per frame) | 300 | sequential + loop detection | 68 (23%) | 5 (68, 26, 25, 25, 20) |
+| 3 videos, after (one camera per video) | 3 | sequential + loop detection | 68 (23%) | 5 (68, 26, 25, 20, 3) |
+| 2 portrait videos only (one shared camera) | 1 | exhaustive (90 min) | 101 (34%) | 5 (101, 70, 65, 34, 10) |
+| Manual method, no pipeline: plain FFmpeg `fps=2` (515 frames, no sharpest-frame selection), `colmap automatic_reconstructor --data_type video --quality medium --dense 0 --single_camera_per_folder 1` (6 min) | 3 | automatic (video: sequential + loop detection) | 136 of 515 (26%) | 8 (136, 52, 46, 43, 35, 19, 16, 14) |
+
+So the camera models were **not** what broke NewRoom: with one shared camera and exhaustive matching, 280 of 300 frames are placed but in 5 pieces. Each piece mixes the videos and covers a stretch of the walk; in both portrait videos the walk breaks at the same moments (about 17 s, 35 s, 49 s and 62-66 s of an 80 s lap, i.e. at the room's corners), where frames are blurrier and overlap less (4-6 verified neighbours per frame vs 11-17 for myRoom2). The manual COLMAP method that worked on myRoom/myRoom2 fails the same way on these videos (largest model 26% of frames, 8 pieces), so the pipeline is not the cause. **Cause: the capture, most likely turning too fast at the corners**; the camera fix did **not** rescue NewRoom. Fix: re-film.
+
+**Consequences:** the per-video camera is still kept: one camera per frame is wrong in principle and slows the mapper down. COLMAP is called once per video for feature extraction (same total work). Videos filmed with different settings still cost reconstruction quality: the capture guide asks for one orientation, 30 fps and H.264, and slow turns at the corners.

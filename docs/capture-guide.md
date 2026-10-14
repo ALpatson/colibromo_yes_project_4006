@@ -7,8 +7,8 @@
 ## The short version
 
 Film **three videos of the same room, one per height**, walking slowly along the walls
-while facing into the room. Name them `bottom.mp4`, `middle.mp4` and `up.mp4`, and give
-all three to one run:
+while facing into the room, all in **landscape at 30 fps**. Name them `bottom.mp4`,
+`middle.mp4` and `up.mp4` (or label them so in `cpipe ui`), and give all three to one run:
 
 ```bash
 cpipe run --video bottom.mp4 --video middle.mp4 --video up.mp4 --output data/runs/room
@@ -27,6 +27,13 @@ cpipe run --video bottom.mp4 --video middle.mp4 --video up.mp4 --output data/run
     Video mode with fixed exposure).
 - **1080p or 4K, 30 fps.** Keep the same settings (resolution, orientation, lens: no zoom,
   no ultra-wide switching) for all passes, so COLMAP can use one camera model.
+- **Film at 30 fps, and on Samsung turn off "High efficiency video"** (Camera settings >
+  Advanced video options), so it records H.264 instead of HEVC. 60 fps HEVC gives nothing
+  extra for 3D but makes frame extraction several times slower (NewRoom: 7 min 51 s
+  for 4 min of 60 fps HEVC, against about 1 min for myRoom2's 30 fps H.264).
+- **Same orientation for every pass, landscape recommended.** Don't turn the phone
+  between passes or during a pass: mixed orientations need a separate camera model per
+  video, which weakens the reconstruction.
 - **iPhone HDR is fine:** the pipeline detects HDR (HLG) and tone-maps it to normal colours
   (decision D-012). Turning HDR video off (Settings > Camera > Record Video > HDR Video)
   also works.

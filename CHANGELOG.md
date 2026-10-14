@@ -12,6 +12,7 @@ One entry per PRD step (newest first). Dates are YYYY-MM-DD.
 - `export` writes `cameras.json` (D-015): every frame's name, source video, timestamp, position and orientation in scene.ply's coordinates (gsplat transform applied), plus intrinsics; `images.bin` / `cameras.bin` readers in `utils/colmap_model.py`.
 - Docs: `docs/capture-guide.md` rewritten from the myRoom2 tests (three heights, walk along the walls facing in, slow turns, locked exposure/focus, nobody moving, iPhone HDR); `docs/pipeline.md` test overview; READMEs updated. 132 CPU tests.
 - `cpipe ui` (D-016): local web page (127.0.0.1 only, standard library only) to upload a room's videos, run the pipeline with Brush, follow each step and Brush's progress, resume after a failure, and open the result in the viewer prototype. A developer tool; the Step 5 backend will replace it. `Manifest.save()` retries its rename on Windows while the page reads the file.
+- One COLMAP camera per video when videos differ in resolution/orientation (D-017), instead of one per frame (correct in principle; it did not rescue the failed NewRoom capture, see D-017). `validate` and `cpipe ui` warn about mixed orientations; `cpipe ui` labels videos bottom / middle / up (names in the run, `run_pipeline()` accepts named videos) and shows each video's resolution/orientation/fps/codec. Capture guide: one orientation, 30 fps, H.264 on Samsung.
 
 ## 2026-10-08 · Step 1: reconstruction pipeline CLI (in progress)
 

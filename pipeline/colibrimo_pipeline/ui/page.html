@@ -74,9 +74,11 @@
         <select id="preset"></select>
       </div>
     </div>
-    <div id="drop">Drop videos here (one per height: bottom, middle, up), or click to choose</div>
+    <div id="drop">Drop videos here (one per height), or click to choose. Then label each one
+      bottom / middle / up below.</div>
     <input id="picker" type="file" accept="video/*,.mov,.mp4,.m4v,.mkv" multiple class="hidden">
     <ul class="files" id="files"></ul>
+    <div class="note hidden" id="notes"></div>
     <button id="start" disabled>Start</button>
     <span class="muted" id="startHint"></span>
   </section>
@@ -110,6 +112,32 @@ const STEP_LABELS = { validate: "Check videos", extract_frames: "Extract frames"
   poses: "Camera poses (COLMAP)", train: "Train splat", export: "Export scene" };
 let state = null;
 let uploading = 0;
+let shownFiles = "";
+
+/** One uploaded video: name, details, and its bottom/middle/up label. */
+function fileRow(f) {
+  const li = document.createElement("li");
+  const left = document.createElement("span");
+  left.textContent = f.name;
+  const d = f.details;
+  const info = document.createElement("span");
+  info.className = "muted";
+  info.textContent = (d ? ` · ${d.orientation} ${d.width}×${d.height} · ${fmtDuration(d.duration_s)} · ${Math.round(d.fps || 0)} fps · ${d.codec}${d.hdr ? " HDR" : ""}` : "") + ` · ${fmtBytes(f.size)}`;
+  left.appendChild(info);
+  const select = document.createElement("select");
+  select.style.width = "auto";
+  for (const [value, text] of [["", "no label"], ["bottom", "bottom"], ["middle", "middle (eye height)"], ["up", "up"]]) {
+    select.add(new Option(text, value, false, value === f.label));
+  }
+  select.onchange = async () => {
+    try { await api("POST", "/api/label", { room: room(), file: f.name, label: select.value }); }
+    catch (err) { alert(err.message); }
+    shownFiles = "";
+    refresh();
+  };
+  li.append(left, select);
+  return li;
+}
 
 const fmtDuration = (s) => {
   if (s == null) return "";
@@ -148,11 +176,21 @@ function render() {
 
   const info = state.room;
   const files = info ? info.videos : [];
-  // (Names come from the server, already reduced to letters, digits, - and _.)
-  // Not redrawn during uploads, which show their own progress rows.
-  if (!uploading) {
-    $("files").innerHTML = files.map((f) => `<li><span>${f.name}</span><span class="muted">${fmtBytes(f.size)}</span></li>`).join("");
+  // Not redrawn during uploads (they show their own progress rows), nor when nothing
+  // changed (so an open label menu isn't closed by the 2-second refresh).
+  const signature = JSON.stringify(files);
+  if (!uploading && signature !== shownFiles) {
+    shownFiles = signature;
+    $("files").innerHTML = "";
+    for (const f of files) $("files").appendChild(fileRow(f));
   }
+  const notes = [];
+  if (info && info.mixed_orientation) notes.push("These videos mix portrait and landscape. Film all passes the same way (landscape recommended): mixed orientations make the 3D reconstruction much weaker.");
+  if (info && info.missing_middle) notes.push("No video is labelled \"middle\": the viewer takes the eye height from it.");
+  for (const w of (info && info.progress && info.progress.warnings) || []) notes.push(w);
+  $("notes").classList.toggle("hidden", !notes.length);
+  $("notes").innerHTML = "";
+  for (const n of notes) { const p = document.createElement("div"); p.textContent = "⚠ " + n; $("notes").appendChild(p); }
 
   const busy = state.running || uploading > 0;
   $("start").disabled = busy || !files.length;

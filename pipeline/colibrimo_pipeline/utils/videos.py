@@ -51,36 +51,41 @@ def videos_in_folder(folder: Path) -> list[Path]:
 
 
 def collect_videos(
-    videos: str | Path | Sequence[str | Path] | None = None,
+    videos: str | Path | VideoInput | Sequence[str | Path | VideoInput] | None = None,
     folder: str | Path | None = None,
 ) -> list[VideoInput]:
     """Videos from explicit paths and/or a folder, named and checked for duplicates.
 
-    Paths are resolved but not checked for existence here: the ``validate``
-    step reports a missing file with a clear message.
+    A ``VideoInput`` keeps its own name (e.g. "middle" for a file named by date,
+    as labelled in ``cpipe ui``); a plain path is named after its file. Paths are
+    resolved but not checked for existence here: the ``validate`` step reports a
+    missing file with a clear message.
     """
-    paths: list[Path] = []
-    if isinstance(videos, str | Path):
-        paths.append(Path(videos))
-    elif videos:
-        paths.extend(Path(v) for v in videos)
+    items: list[tuple[Path, str | None]] = []
+    for v in [videos] if isinstance(videos, str | Path | VideoInput) else videos or []:
+        if isinstance(v, VideoInput):
+            items.append((v.path, v.name))
+        else:
+            items.append((Path(v), None))
     if folder is not None:
-        paths.extend(videos_in_folder(Path(folder)))
-    if not paths:
+        items.extend((p, None) for p in videos_in_folder(Path(folder)))
+    if not items:
         raise ConfigError("No input video: give --video (repeatable) or --videos.")
-    return name_videos(Path(p).resolve() for p in paths)
+    return name_videos((Path(p).resolve(), name) for p, name in items)
 
 
-def name_videos(paths: Iterable[Path]) -> list[VideoInput]:
-    """Pair each path with its name; reject the same file twice or clashing names."""
+def name_videos(items: Iterable[Path | tuple[Path, str | None]]) -> list[VideoInput]:
+    """Pair each path with its name (given, or from the file name); reject the same
+    file twice or clashing names."""
     result: list[VideoInput] = []
     seen_paths: set[Path] = set()
     seen_names: dict[str, Path] = {}
-    for path in paths:
+    for item in items:
+        path, given = item if isinstance(item, tuple) else (item, None)
         if path in seen_paths:
             continue  # same file given twice (e.g. --video and --videos)
         seen_paths.add(path)
-        name = video_name(path)
+        name = video_name(Path(given)) if given else video_name(path)
         if name.lower() in seen_names:
             raise ConfigError(
                 f"Two videos would get the same name '{name}': "
