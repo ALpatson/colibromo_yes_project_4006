@@ -283,7 +283,7 @@ So the camera models were **not** what broke NewRoom: with one shared camera and
 
 **Decision:** leftover models go to `<run>/colmap_unused/` (next to `colmap/`, not inside it). Before training, Brush's step moves leftovers of older layouts out (`colmap/sparse/unused_N`, `colmap/unused_models/`) and then checks that the only COLMAP model anywhere under `colmap/` is `sparse/0`; otherwise it stops with a clear message before starting Brush. The coordinate check is unchanged. Existing run folders on the team laptop (Bathroom, NewRoom, NewRoom-fixed, NewRoom-portrait, testnew) were cleaned the same way on 2026-10-14.
 
-**Verified:** testnew re-trained after the fix: Brush now logs "Loading colmap dataset with 260 images" and "Starting from colmap points 18568" (see the result below).
+**Verified:** testnew re-trained after the fix: Brush now logs "Loading colmap dataset with 260 images" and "Starting from colmap points 18568". Result: coordinate check 0.0109 x scene size (< 0.015), 668,690 Gaussians in 5525 s, `scene.ply` 157.8 MB, `cameras.json` with 260 cameras.
 
 **Consequences:** the run folder layout has a new `colmap_unused/`; nothing else reads it.
 
