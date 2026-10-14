@@ -41,6 +41,7 @@ from colibrimo_pipeline.steps._brush import (
 from colibrimo_pipeline.steps.base import StepContext, StepResult
 from colibrimo_pipeline.utils.colmap_model import (
     UNUSED_MODELS_DIR,
+    find_model_dirs,
     move_unused_models,
     read_points3d_xyz,
 )
@@ -155,12 +156,20 @@ def run_brush(ctx: StepContext) -> StepResult:
     sparse_model = ctx.manifest.step_output("poses", "sparse_model")  # colmap/sparse/0
     data_dir = sparse_model.parent.parent  # colmap/
 
-    # Brush loads whatever model it finds in sparse/: make sure only "0" is there
-    # (run folders made before this was done by the poses step).
+    # Brush scans the whole colmap/ folder and mixes files of every model it finds
+    # (testnew: images of one leftover model, points of another; D-018). Move
+    # leftovers of older run folders out, then make sure only sparse/0 is left.
     moved = move_unused_models(sparse_model.parent)
     for name in moved:
-        ctx.logger.info(
-            "Moved unused COLMAP model sparse/%s to %s/.", name, UNUSED_MODELS_DIR
+        ctx.logger.info("Moved unused COLMAP model %s to %s/.", name, UNUSED_MODELS_DIR)
+    models = find_model_dirs(data_dir)
+    if [m.resolve() for m in models] != [sparse_model.resolve()]:
+        found = [m.relative_to(data_dir).as_posix() for m in models] or ["none"]
+        raise StepError(
+            NAME,
+            "Brush must see exactly one COLMAP model (colmap/sparse/0), but colmap/ "
+            f"contains: {', '.join(found)}. Move the others out of colmap/ "
+            f"(e.g. to {UNUSED_MODELS_DIR}/) and resume.",
         )
 
     result_dir = ctx.run_dir / "train"

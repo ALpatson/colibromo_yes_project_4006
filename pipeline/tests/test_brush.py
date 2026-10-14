@@ -17,6 +17,7 @@ from colibrimo_pipeline.steps._brush import (
     parse_progress,
 )
 from colibrimo_pipeline.utils.colmap_model import (
+    find_model_dirs,
     move_unused_models,
     promote_best_model,
     read_points3d_xyz,
@@ -123,36 +124,93 @@ def write_fake_model(folder, num_images):
     (folder / "images.bin").write_bytes(struct.pack("<Q", num_images))
 
 
-def test_promote_moves_unused_models_out_even_if_best_is_already_zero(tmp_path):
+def test_promote_moves_unused_models_out_of_colmap(tmp_path):
     sparse = tmp_path / "colmap" / "sparse"
     write_fake_model(sparse / "0", 290)
     write_fake_model(sparse / "1", 4)  # the tiny model Brush loaded by mistake
     promote_best_model(sparse)
-    assert [p.name for p in sparse.iterdir()] == ["0"]
-    assert (tmp_path / "colmap" / "unused_models" / "model_1" / "images.bin").is_file()
+    # Nothing but sparse/0 is left anywhere under colmap/ (Brush scans all of it).
+    assert find_model_dirs(tmp_path / "colmap") == [sparse / "0"]
+    assert (tmp_path / "colmap_unused" / "model_1" / "images.bin").is_file()
 
 
-def test_move_unused_models_handles_old_layout_and_is_idempotent(tmp_path):
-    sparse = tmp_path / "colmap" / "sparse"
-    write_fake_model(sparse / "0", 290)
-    write_fake_model(sparse / "unused_1", 4)  # layout before this change
-    write_fake_model(sparse / "unused_2", 2)
+def test_move_unused_models_handles_both_old_layouts_and_is_idempotent(tmp_path):
+    colmap = tmp_path / "colmap"
+    write_fake_model(colmap / "sparse" / "0", 290)
+    write_fake_model(colmap / "sparse" / "unused_1", 4)  # layout before D-014
+    write_fake_model(colmap / "unused_models" / "model_1", 18)  # D-014 (testnew)
+    write_fake_model(colmap / "unused_models" / "model_2", 2)
 
-    assert move_unused_models(sparse) == ["unused_1", "unused_2"]
-    assert [p.name for p in sparse.iterdir()] == ["0"]
-    unused = tmp_path / "colmap" / "unused_models"
-    assert sorted(p.name for p in unused.iterdir()) == ["unused_1", "unused_2"]
-    assert move_unused_models(sparse) == []  # second call: nothing to do
+    assert move_unused_models(colmap / "sparse") == [
+        "sparse/unused_1",
+        "unused_models/model_1",
+        "unused_models/model_2",
+    ]
+    assert find_model_dirs(colmap) == [colmap / "sparse" / "0"]
+    assert not (colmap / "unused_models").exists()
+    unused = tmp_path / "colmap_unused"
+    assert sorted(p.name for p in unused.iterdir()) == [
+        "model_1",
+        "model_2",
+        "unused_1",
+    ]
+    assert move_unused_models(colmap / "sparse") == []  # second call: nothing to do
 
 
 def test_move_unused_models_never_overwrites(tmp_path):
     sparse = tmp_path / "colmap" / "sparse"
     write_fake_model(sparse / "0", 10)
     write_fake_model(sparse / "unused_1", 3)
-    write_fake_model(tmp_path / "colmap" / "unused_models" / "unused_1", 7)
+    write_fake_model(tmp_path / "colmap_unused" / "unused_1", 7)
     move_unused_models(sparse)
-    unused = tmp_path / "colmap" / "unused_models"
+    unused = tmp_path / "colmap_unused"
     assert sorted(p.name for p in unused.iterdir()) == ["unused_1", "unused_1_1"]
+
+
+def brush_run(tmp_path, monkeypatch):
+    """A run folder after poses, with Brush itself replaced by a stub that records it ran."""
+    from colibrimo_pipeline.manifest import Manifest
+    from colibrimo_pipeline.steps import train
+    from colibrimo_pipeline.steps.base import StepContext
+    from colibrimo_pipeline.utils.logs import setup_logging
+
+    sparse0 = tmp_path / "colmap" / "sparse" / "0"
+    write_fake_model(sparse0, 260)
+    manifest = Manifest.load_or_create(tmp_path)
+    manifest.mark_succeeded("poses", {"sparse_model": sparse0}, {}, 0)
+    started = []
+
+    def fake_run_tool(cmd, **kwargs):
+        started.append(cmd)
+        raise RuntimeError("stop after starting Brush")  # enough for this test
+
+    monkeypatch.setattr(train, "brush_executable", lambda cfg: "brush_app.exe")
+    monkeypatch.setattr(train, "run_tool", fake_run_tool)
+    ctx = StepContext(
+        tmp_path, [], brush_config(), manifest, setup_logging(tmp_path / "logs")
+    )
+    return ctx, train, started
+
+
+def test_brush_cleans_up_an_old_run_folder_before_training(tmp_path, monkeypatch):
+    ctx, train, started = brush_run(tmp_path, monkeypatch)
+    write_fake_model(
+        tmp_path / "colmap" / "unused_models" / "model_1", 18
+    )  # like testnew
+    with pytest.raises(RuntimeError, match="stop after starting Brush"):
+        train.run_brush(ctx)
+    assert len(started) == 1  # Brush started, after the leftover was moved out
+    assert find_model_dirs(tmp_path / "colmap") == [
+        tmp_path / "colmap" / "sparse" / "0"
+    ]
+
+
+def test_brush_refuses_any_other_model_inside_colmap(tmp_path, monkeypatch):
+    ctx, train, started = brush_run(tmp_path, monkeypatch)
+    write_fake_model(tmp_path / "colmap" / "copy_of_old_model", 18)  # unexpected place
+    with pytest.raises(StepError, match="exactly one COLMAP model"):
+        train.run_brush(ctx)
+    assert started == []  # Brush never ran
 
 
 # ---- readers ------------------------------------------------------------------------

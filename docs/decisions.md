@@ -216,6 +216,8 @@ Both connect all three heights in one model. (Exhaustive wall-clock time was lon
 
 ## D-014 · Unused COLMAP models leave `colmap/sparse/` · 2026-10-13
 
+**Superseded by D-018:** `colmap/unused_models/` was still inside the folder Brush scans.
+
 **Context:** COLMAP's mapper can split a capture into several models. The pipeline kept the largest as `sparse/0` and renamed the others `sparse/unused_N`. gsplat reads `sparse/0` explicitly, but **Brush loaded a small leftover model** instead of the real one when others were still inside the folder (manual test).
 
 **Decision:** `poses` keeps only the largest model in `sparse/` (as `0`) and moves the others to `colmap/unused_models/model_N` (kept for debugging; cleared when `poses` re-runs). `train` with Brush also moves anything other than `0` out of `sparse/` before training, so run folders made before this change work too (idempotent, never overwrites).
@@ -272,3 +274,15 @@ Both connect all three heights in one model. (Exhaustive wall-clock time was lon
 So the camera models were **not** what broke NewRoom: with one shared camera and exhaustive matching, 280 of 300 frames are placed but in 5 pieces. Each piece mixes the videos and covers a stretch of the walk; in both portrait videos the walk breaks at the same moments (about 17 s, 35 s, 49 s and 62-66 s of an 80 s lap, i.e. at the room's corners), where frames are blurrier and overlap less (4-6 verified neighbours per frame vs 11-17 for myRoom2). The manual COLMAP method that worked on myRoom/myRoom2 fails the same way on these videos (largest model 26% of frames, 8 pieces), so the pipeline is not the cause. **Cause: the capture, most likely turning too fast at the corners**; the camera fix did **not** rescue NewRoom. Fix: re-film.
 
 **Consequences:** the per-video camera is still kept: one camera per frame is wrong in principle and slows the mapper down. COLMAP is called once per video for feature extraction (same total work). Videos filmed with different settings still cost reconstruction quality: the capture guide asks for one orientation, 30 fps and H.264, and slow turns at the corners.
+
+---
+
+## D-018 · Leftover COLMAP models go outside `colmap/`; Brush checks it sees exactly one model · 2026-10-14
+
+**Context:** run "testnew" (one iPhone HDR video): COLMAP placed 260 of 300 frames in the main model plus two small leftover models (18 and 2 frames), which D-014 had moved to `colmap/unused_models/`. Brush **scans the whole dataset folder** (`colmap/`, "Mounted VFS with 319 files") and mixed them: it logged "Loading colmap dataset with **18** images" (leftover `model_1`) and "Starting from colmap points **1285**" (leftover `model_2`). It trained 30,000 steps on that and produced 2,341 splats in the wrong coordinates; the coordinate check (D-013) rejected it correctly (median nearest-splat distance 1.16 x scene size, threshold 0.015). myRoom2 never showed it because COLMAP made a single model there.
+
+**Decision:** leftover models go to `<run>/colmap_unused/` (next to `colmap/`, not inside it). Before training, Brush's step moves leftovers of older layouts out (`colmap/sparse/unused_N`, `colmap/unused_models/`) and then checks that the only COLMAP model anywhere under `colmap/` is `sparse/0`; otherwise it stops with a clear message before starting Brush. The coordinate check is unchanged. Existing run folders on the team laptop (Bathroom, NewRoom, NewRoom-fixed, NewRoom-portrait, testnew) were cleaned the same way on 2026-10-14.
+
+**Verified:** testnew re-trained after the fix: Brush now logs "Loading colmap dataset with 260 images" and "Starting from colmap points 18568" (see the result below).
+
+**Consequences:** the run folder layout has a new `colmap_unused/`; nothing else reads it.

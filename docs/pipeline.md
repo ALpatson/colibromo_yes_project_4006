@@ -1,7 +1,7 @@
 # Reconstruction pipeline (`cpipe`)
 
 Turns one or more phone videos of one room into a 3D Gaussian Splatting scene (`scene.ply`).
-Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-017).
+Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-018).
 
 ```
 video(s) ──validate──▶ extract_frames ──▶ poses ──▶ train ──▶ export ──▶ scene.ply
@@ -13,7 +13,7 @@ video(s) ──validate──▶ extract_frames ──▶ poses ──▶ train 
 |---|---|---|
 | `validate` | Reads each video with ffprobe. Fails if all videos together are shorter than 20 s or one video is longer than 5 min; warns below 1080p. | any machine |
 | `extract_frames` | Shares the target frame count between the videos by duration. Per video: extracts 2x its share with FFmpeg, keeps the sharpest frame of each group, downscales. Fails if a video looks static. | any machine |
-| `poses` | COLMAP: feature extraction (one shared camera model, or one per video if the videos differ in resolution/orientation, D-017), matching (sequential for one video, sequential + loop detection for several), mapper. Keeps the largest model (others go to `colmap/unused_models/`). Fails if fewer than 70% of frames are registered. | any machine (CPU, or GPU with a CUDA build) |
+| `poses` | COLMAP: feature extraction (one shared camera model, or one per video if the videos differ in resolution/orientation, D-017), matching (sequential for one video, sequential + loop detection for several), mapper. Keeps the largest model (others go to `colmap_unused/`, outside `colmap/`, D-018). Fails if fewer than 70% of frames are registered. | any machine (CPU, or GPU with a CUDA build) |
 | `train` | `train.trainer: gsplat` (default): gsplat `simple_trainer.py` (headless, seed 42). `train.trainer: brush`: Brush (headless, seed 42). | gsplat: **Linux + NVIDIA GPU**; Brush: **any GPU, Windows too** |
 | `export` | Copies the trained splat to `scene.ply`, writes `cameras.json` (camera poses for the viewer), records the scene transform in the manifest. | any machine |
 
@@ -253,7 +253,8 @@ data/runs/room1/
 ├── colmap/images/           selected frames, named after their video (bottom_00000.jpg ...)
 ├── colmap/database.db       COLMAP features and matches
 ├── colmap/sparse/0/         camera poses + sparse points (the only model in sparse/)
-├── colmap/unused_models/    other, smaller models COLMAP made, if any (model_1 ...)
+├── colmap_unused/           other, smaller models COLMAP made, if any (model_1 ...); kept
+│                            outside colmap/ because Brush reads everything in it (D-018)
 ├── train/ply/               gsplat: trained splat
 ├── train/ckpts/             gsplat: checkpoint (for evaluation in Step 2)
 ├── train/export_30000.ply   Brush: trained splat (number = training steps)

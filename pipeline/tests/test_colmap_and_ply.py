@@ -32,18 +32,18 @@ def test_read_entry_count_rejects_truncated_file(tmp_path):
 
 
 def test_promote_best_model_makes_largest_model_zero(tmp_path):
-    sparse = tmp_path / "sparse"
+    sparse = tmp_path / "colmap" / "sparse"  # <run>/colmap/sparse
     write_fake_model(sparse / "0", num_images=20)
     write_fake_model(sparse / "1", num_images=250)
     write_fake_model(sparse / "2", num_images=5)
 
     models = promote_best_model(sparse)
 
-    # The other models leave sparse/ completely (Brush must only see one model).
+    # The other models leave colmap/ completely (Brush must only see one model).
     assert [(p.relative_to(tmp_path).as_posix(), n) for p, n in models] == [
-        ("sparse/0", 250),
-        ("unused_models/model_1", 20),
-        ("unused_models/model_2", 5),
+        ("colmap/sparse/0", 250),
+        ("colmap_unused/model_1", 20),
+        ("colmap_unused/model_2", 5),
     ]
     assert read_entry_count(sparse / "0" / "images.bin") == 250
     assert [p.name for p in sparse.iterdir()] == ["0"]

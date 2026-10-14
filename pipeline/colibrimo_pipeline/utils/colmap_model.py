@@ -34,15 +34,40 @@ def find_models(sparse_dir: Path) -> list[tuple[Path, int]]:
     return sorted(models, key=lambda m: m[1], reverse=True)
 
 
-UNUSED_MODELS_DIR = "unused_models"
+# Leftover models go to <run>/colmap_unused/, NEXT TO colmap/, not inside it:
+# Brush scans the whole colmap/ folder and mixed files from leftover models
+# (D-018). Older layouts: colmap/sparse/unused_N (D-010), colmap/unused_models/ (D-014).
+UNUSED_MODELS_DIR = "colmap_unused"
+OLD_UNUSED_MODELS_DIR = "unused_models"
+
+
+def unused_models_dir(sparse_dir: Path) -> Path:
+    """``<run>/colmap_unused`` for ``<run>/colmap/sparse``."""
+    return sparse_dir.parent.parent / UNUSED_MODELS_DIR
+
+
+def find_model_dirs(colmap_dir: Path) -> list[Path]:
+    """Every COLMAP model (folder with an images.bin) anywhere under ``colmap_dir``."""
+    return sorted(p.parent for p in Path(colmap_dir).rglob("images.bin"))
+
+
+def _move_unique(source: Path, target_dir: Path, name: str) -> Path:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / name
+    n = 1
+    while target.exists():
+        target = target_dir / f"{name}_{n}"
+        n += 1
+    source.rename(target)
+    return target
 
 
 def promote_best_model(sparse_dir: Path) -> list[tuple[Path, int]]:
-    """Keep only the largest model, as ``sparse/0``; move the others out of ``sparse/``.
+    """Keep only the largest model, as ``sparse/0``; move the others out of ``colmap/``.
 
     COLMAP's mapper may split a capture into several models. The others go to
-    ``<colmap>/unused_models/model_N`` (kept for debugging): trainers must only
-    see one model (Brush loaded a tiny leftover model instead of ``0``).
+    ``<run>/colmap_unused/model_N`` (kept for debugging): trainers must only
+    see one model (Brush mixed files of leftover models, D-018).
     Returns the models after moving, largest first (empty list if there are none).
     """
     models = find_models(sparse_dir)
@@ -60,35 +85,34 @@ def promote_best_model(sparse_dir: Path) -> list[tuple[Path, int]]:
     best_tmp.rename(best)
     result = [(best, best_count)]
 
-    unused_dir = sparse_dir.parent / UNUSED_MODELS_DIR
+    unused_dir = unused_models_dir(sparse_dir)
     for i, (tmp_path, count) in enumerate(temp[1:], start=1):
-        unused_dir.mkdir(exist_ok=True)
-        final = unused_dir / f"model_{i}"
-        tmp_path.rename(final)
-        result.append((final, count))
+        result.append((_move_unique(tmp_path, unused_dir, f"model_{i}"), count))
     return result
 
 
 def move_unused_models(sparse_dir: Path) -> list[str]:
-    """Move every folder in ``sparse/`` except ``0`` to ``unused_models/``.
+    """Move every leftover model out of ``colmap/`` into ``<run>/colmap_unused/``.
 
-    For run folders made before ``promote_best_model`` moved them itself
-    (they had ``sparse/unused_N``). Idempotent. Returns the moved folder names.
+    Leftovers are any folder in ``sparse/`` other than ``0`` (layout before
+    D-014) and anything in ``colmap/unused_models/`` (layout of D-014, still
+    inside colmap/). For run folders made before D-018. Idempotent, never
+    overwrites. Returns what was moved, e.g. ``["unused_models/model_1"]``.
     """
-    moved = []
-    if not sparse_dir.is_dir():
-        return moved
-    unused_dir = sparse_dir.parent / UNUSED_MODELS_DIR
-    for child in sorted(sparse_dir.iterdir()):
-        if child.is_dir() and child.name != "0":
-            unused_dir.mkdir(exist_ok=True)
-            target = unused_dir / child.name
-            n = 1
-            while target.exists():
-                target = unused_dir / f"{child.name}_{n}"
-                n += 1
-            child.rename(target)
-            moved.append(child.name)
+    moved: list[str] = []
+    colmap_dir = sparse_dir.parent
+    target_dir = unused_models_dir(sparse_dir)
+    if sparse_dir.is_dir():
+        for child in sorted(sparse_dir.iterdir()):
+            if child.is_dir() and child.name != "0":
+                _move_unique(child, target_dir, child.name)
+                moved.append(f"sparse/{child.name}")
+    old_dir = colmap_dir / OLD_UNUSED_MODELS_DIR
+    if old_dir.is_dir():
+        for child in sorted(old_dir.iterdir()):
+            _move_unique(child, target_dir, child.name)
+            moved.append(f"{OLD_UNUSED_MODELS_DIR}/{child.name}")
+        old_dir.rmdir()
     return moved
 
 
