@@ -92,10 +92,12 @@
     </div>
     <div class="error hidden" id="error"></div>
     <button id="resume" class="secondary hidden">Resume</button>
+    <button id="partial" class="secondary hidden">Continue anyway (partial room)</button>
   </section>
 
   <section class="card hidden" id="resultCard">
     <h2>3. Result</h2>
+    <div class="note hidden" id="partialNote"></div>
     <div class="stats">
       <div class="stat"><span class="muted">Training time</span><b id="rTime"></b></div>
       <div class="stat"><span class="muted">Splats</span><b id="rSplats"></b></div>
@@ -220,6 +222,15 @@ function render() {
   $("error").classList.toggle("hidden", !errorText || state.running && state.running_room === info.name);
   $("error").textContent = errorText || "";
   $("resume").classList.toggle("hidden", !canResume || !progress);
+  $("partial").classList.toggle("hidden", state.running || !(progress && progress.can_continue_partial));
+
+  const partial = progress && progress.partial_room;
+  $("partialNote").classList.toggle("hidden", !partial);
+  if (partial) {
+    $("partialNote").textContent = `⚠ PARTIAL ROOM: only ${partial.frames_placed} of ${partial.frames_total} frames ` +
+      `(${Math.round(100 * partial.ratio)}%) were placed by COLMAP. Expect missing parts and holes; re-film for a full room.`;
+  }
+  if (partial && progress.status !== "succeeded") $("runInfo").textContent += " · PARTIAL";
 
   const result = progress && progress.status === "succeeded" && progress.result;
   $("resultCard").classList.toggle("hidden", !result);
@@ -277,6 +288,15 @@ $("start").onclick = async () => {
 };
 $("resume").onclick = async () => {
   try { await api("POST", "/api/resume", { room: room() }); }
+  catch (err) { alert(err.message); }
+  refresh();
+};
+$("partial").onclick = async () => {
+  if (!confirm("Build a PARTIAL room from the frames COLMAP could place?\n\n" +
+      "The room will have missing parts and holes, and it will be marked as partial. " +
+      "COLMAP's result is reused, so this goes straight to training.\n\n" +
+      "For a complete room, re-film instead (slow turns at the corners).")) return;
+  try { await api("POST", "/api/continue-partial", { room: room() }); }
   catch (err) { alert(err.message); }
   refresh();
 };

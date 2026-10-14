@@ -125,6 +125,16 @@ class PosesConfig(_Section):
     min_registered_ratio: float = Field(
         0.7, ge=0, le=1, description="Fail if COLMAP registers fewer frames than this."
     )
+    allow_partial: bool = Field(
+        False,
+        description="Below min_registered_ratio, continue with the placed frames only "
+        "(a partial room, marked as such) instead of failing. Off by default.",
+    )
+    min_registered_frames: int = Field(
+        20,
+        ge=1,
+        description="Even with allow_partial, fail if fewer frames than this are placed.",
+    )
     use_gpu: bool = Field(False, description="GPU SIFT (needs a CUDA build of COLMAP).")
     num_threads: int = Field(-1, description="-1 = all CPU cores.")
     random_seed: int = 42

@@ -287,9 +287,23 @@ def read_progress(run_dir: Path) -> dict[str, Any] | None:
             "num_cameras": export_info.get("num_cameras"),
             "gpu": (train_info.get("gpu") or {}).get("name"),
         }
+    # "Continue anyway (partial room)" is offered when poses failed only because
+    # too few frames were placed, and enough were placed to build something.
+    poses_cfg = manifest.get("config", {}).get("poses", {})
+    poses_step = recorded.get("poses", {})
+    poses_info = poses_step.get("info", {})
+    can_continue_partial = (
+        poses_step.get("status") == "failed"
+        and poses_info.get("registered_ratio", 1.0)
+        < poses_cfg.get("min_registered_ratio", 0.7)
+        and poses_info.get("num_registered", 0)
+        >= poses_cfg.get("min_registered_frames", 20)
+    )
     return {
         "status": manifest.get("status"),
         "error": manifest.get("error"),
+        "partial_room": manifest.get("partial_room"),
+        "can_continue_partial": can_continue_partial,
         "preset": manifest.get("config", {}).get("preset"),
         "warnings": recorded.get("validate", {}).get("info", {}).get("warnings", []),
         "steps": steps,
@@ -350,16 +364,26 @@ class Runner:
         same_names = previous.get("names") in (None, [v.name for v in videos])
         return not (same_paths and same_names)
 
-    def start(self, room: str, preset: str, resume: bool = False) -> None:
+    def start(
+        self,
+        room: str,
+        preset: str,
+        resume: bool = False,
+        allow_partial: bool = False,
+    ) -> None:
         """Run the room. A new Start with other videos/labels than the last run
-        starts from scratch (old frames carry the old names); Resume reuses steps."""
+        starts from scratch (old frames carry the old names); Resume reuses steps.
+        ``allow_partial``: continue with a partial room (poses.allow_partial)."""
         room = clean_room_name(room)
         if preset not in PRESETS:
             raise UserError(f"Unknown preset '{preset}': use one of {PRESETS}.")
         if not list_videos(self.uploads_dir, room):
             raise UserError(f"No videos uploaded for '{room}' yet.")
         videos = named_videos(self.uploads_dir, room)  # ConfigError on clashing names
-        config = load_config(preset, self.overrides)  # ConfigError if --set is wrong
+        overrides = self.overrides
+        if allow_partial:
+            overrides = deep_merge(overrides, {"poses": {"allow_partial": True}})
+        config = load_config(preset, overrides)  # ConfigError if --set is wrong
         force = not resume and self.inputs_changed(room, videos)
 
         with self._lock:
@@ -374,12 +398,32 @@ class Runner:
             )
             self._thread.start()
 
-    def resume(self, room: str) -> None:
-        """Run again on the same folder: finished steps are skipped (resumability)."""
+    def resume(self, room: str, allow_partial: bool | None = None) -> None:
+        """Run again on the same folder: finished steps are skipped (resumability).
+
+        A run that already continued as a partial room keeps doing so.
+        """
         room = clean_room_name(room)
-        manifest = read_manifest(self.run_dir(room)) or {}
-        preset = manifest.get("config", {}).get("preset") or "balanced"
-        self.start(room, preset if preset in PRESETS else "balanced", resume=True)
+        config = (read_manifest(self.run_dir(room)) or {}).get("config", {})
+        preset = config.get("preset") or "balanced"
+        if allow_partial is None:
+            allow_partial = bool(config.get("poses", {}).get("allow_partial"))
+        self.start(
+            room,
+            preset if preset in PRESETS else "balanced",
+            resume=True,
+            allow_partial=allow_partial,
+        )
+
+    def continue_partial(self, room: str) -> None:
+        """'Continue anyway': resume with a partial room (COLMAP's result is reused)."""
+        progress = read_progress(self.run_dir(clean_room_name(room)))
+        if not progress or not progress["can_continue_partial"]:
+            raise UserError(
+                "Nothing to continue: this only applies when COLMAP placed too few "
+                "frames (but at least the minimum)."
+            )
+        self.resume(room, allow_partial=True)
 
     def _run(self, room: str, videos: list[VideoInput], config, force: bool) -> None:
         try:

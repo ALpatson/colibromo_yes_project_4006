@@ -12,6 +12,7 @@ Routes::
     PUT  /api/upload?room=&file= one video, raw body (streamed to data/uploads/<room>/)
     POST /api/start              {"room", "preset"}
     POST /api/resume             {"room"}
+    POST /api/continue-partial   {"room"} (resume with a partial room, D-019)
     POST /api/label              {"room", "file", "label": "bottom"|"middle"|"up"|""}
     POST /api/open-viewer        {"room"} -> {"url"}
 """
@@ -247,6 +248,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"started": True})
             elif route == "/api/resume":
                 runner.resume(str(body.get("room", "")))
+                self._json({"started": True})
+            elif route == "/api/continue-partial":
+                runner.continue_partial(str(body.get("room", "")))
                 self._json({"started": True})
             elif route == "/api/label":
                 labels = set_label(

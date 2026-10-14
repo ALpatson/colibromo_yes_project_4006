@@ -28,6 +28,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from colibrimo_pipeline.config import PosesConfig
 from colibrimo_pipeline.errors import StepError
@@ -141,7 +142,8 @@ def frames_by_video(run_dir: Path, images_dir: Path) -> dict[str, list[str]]:
     return groups
 
 
-def run(ctx: StepContext) -> StepResult:
+def _reconstruct(ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run COLMAP (features, matching, mapper). Returns (info, versions)."""
     cfg = ctx.config.poses
     colmap = Colmap(find_tool("colmap"), ctx.logger)
     images_dir = ctx.manifest.step_output("extract_frames", "images_dir")
@@ -306,15 +308,116 @@ def run(ctx: StepContext) -> StepResult:
         info["num_points3d"],
         len(models),
     )
-    if ratio < cfg.min_registered_ratio:
-        raise StepError(
-            NAME,
-            f"COLMAP placed only {registered} of {num_images} frames ({ratio:.0%}); at least "
-            f"{cfg.min_registered_ratio:.0%} is needed for a good 3D scene. {CAPTURE_TIPS}",
-            info=info,
+    return info, versions
+
+
+# Saved after every COLMAP run (in the run folder, not in colmap/, which Brush
+# scans), so "continue with a partial room" can reuse a failed attempt.
+ATTEMPT_FILE = "poses_attempt.json"
+# Settings that only decide whether a result is accepted, not how it is computed.
+_ACCEPTANCE_SETTINGS = {
+    "allow_partial",
+    "min_registered_frames",
+    "min_registered_ratio",
+}
+
+
+def _attempt_key(ctx: StepContext) -> dict[str, Any]:
+    """What a COLMAP result depends on: its settings and the frames it was run on."""
+    settings = ctx.config.poses.model_dump(mode="json")
+    return {
+        "settings": {
+            k: v for k, v in settings.items() if k not in _ACCEPTANCE_SETTINGS
+        },
+        "frames_from": ctx.manifest.data["steps"]["extract_frames"].get("finished_at"),
+    }
+
+
+def _reusable_attempt(ctx: StepContext) -> dict[str, Any] | None:
+    """Info of the previous COLMAP attempt if it can be reused as is, else None."""
+    path = ctx.run_dir / ATTEMPT_FILE
+    if not path.is_file():
+        return None
+    try:
+        attempt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    colmap_dir = ctx.run_dir / "colmap"
+    if (
+        attempt.get("key") != _attempt_key(ctx)
+        or not (colmap_dir / "sparse" / "0" / "images.bin").is_file()
+        or not (colmap_dir / "database.db").is_file()
+    ):
+        return None
+    return attempt["info"]
+
+
+def run(ctx: StepContext) -> StepResult:
+    cfg = ctx.config.poses
+    colmap_dir = ctx.run_dir / "colmap"
+    versions: dict[str, Any] = {}
+
+    previous = _reusable_attempt(ctx) if cfg.allow_partial else None
+    if previous is not None:
+        # "Continue with a partial room" after a failed attempt: same frames and
+        # settings, so COLMAP's result is reused instead of computed again.
+        ctx.logger.info(
+            "Reusing the previous COLMAP result (%d of %d frames placed).",
+            previous["num_registered"],
+            previous["num_images"],
+        )
+        info = {**previous, "reused_previous_attempt": True}
+    else:
+        info, versions = _reconstruct(ctx)
+        (ctx.run_dir / ATTEMPT_FILE).write_text(
+            json.dumps({"key": _attempt_key(ctx), "info": info}, indent=1),
+            encoding="utf-8",
+        )
+
+    registered, num_images = info["num_registered"], info["num_images"]
+    ratio = info["registered_ratio"]
+    partial = ratio < cfg.min_registered_ratio
+    info["partial"] = partial
+    ctx.manifest.data.pop("partial_room", None)
+    if partial:
+        too_few = (
+            f"COLMAP placed only {registered} of {num_images} frames ({ratio:.0%}); at "
+            f"least {cfg.min_registered_ratio:.0%} is needed for a good 3D scene."
+        )
+        if not cfg.allow_partial:
+            continue_hint = (
+                f" To build a partial room from the {registered} placed frames anyway: "
+                "--set poses.allow_partial=true (or 'Continue anyway' in cpipe ui)."
+                if registered >= cfg.min_registered_frames
+                else ""
+            )
+            raise StepError(NAME, f"{too_few} {CAPTURE_TIPS}{continue_hint}", info=info)
+        if registered < cfg.min_registered_frames:
+            raise StepError(
+                NAME,
+                f"{too_few} Even a partial room needs at least "
+                f"{cfg.min_registered_frames} placed frames. {CAPTURE_TIPS}",
+                info=info,
+            )
+        warning = (
+            f"PARTIAL ROOM: {too_few} Continuing with those frames only "
+            "(poses.allow_partial): expect missing parts and holes."
+        )
+        ctx.logger.warning("Warning: %s", warning)
+        info["warning"] = warning
+        ctx.manifest.set_run_info(
+            partial_room={
+                "frames_placed": registered,
+                "frames_total": num_images,
+                "ratio": ratio,
+                "min_registered_ratio": cfg.min_registered_ratio,
+            }
         )
     return StepResult(
-        outputs={"sparse_model": best_dir, "database": database},
+        outputs={
+            "sparse_model": colmap_dir / "sparse" / "0",
+            "database": colmap_dir / "database.db",
+        },
         info=info,
         versions=versions,
     )

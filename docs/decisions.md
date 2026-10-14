@@ -286,3 +286,19 @@ So the camera models were **not** what broke NewRoom: with one shared camera and
 **Verified:** testnew re-trained after the fix: Brush now logs "Loading colmap dataset with 260 images" and "Starting from colmap points 18568" (see the result below).
 
 **Consequences:** the run folder layout has a new `colmap_unused/`; nothing else reads it.
+
+---
+
+## D-019 · Optionally continue with a partial room (`poses.allow_partial`) · 2026-10-14
+
+**Context:** when COLMAP places fewer than `poses.min_registered_ratio` (70%) of the frames, `poses` stops (PRD R1.7). For a quick look at a capture that failed (e.g. NewRoom: 68-71 of 300 frames in the largest model), the team wants to continue with the frames that were placed, knowing the room will be incomplete.
+
+**Decision:**
+- New setting `poses.allow_partial`, **off by default** (R1.7 unchanged). When on and the ratio is below the limit, `poses` succeeds with a warning ("PARTIAL ROOM ...") instead of failing, as long as at least `poses.min_registered_frames` (20) frames are placed.
+- The run is clearly marked: `steps.poses.info.partial` and `warning`, and a top-level `partial_room` in the manifest (frames placed / total / ratio / limit).
+- No second COLMAP run: every COLMAP attempt is saved in `<run>/poses_attempt.json` (its result, the settings it depends on, and the frames it used). Continuing with the same frames and settings reuses that result; changed settings or frames recompute it. Without the option, the failure message says how to continue.
+- `cpipe ui`: a "Continue anyway (partial room)" button appears only when `poses` failed for that reason with at least 20 frames placed; it asks for confirmation, resumes with `allow_partial`, and the result is marked "PARTIAL ROOM: N of M frames".
+
+**Verified (2026-10-14, NewRoom-fixed):** without the option the run stops (71 of 300 frames, 24%); continuing reuses COLMAP's result in under a second and records `partial_room` (71/300).
+
+**Consequences:** a partial room has missing parts and holes; it is a preview, not a substitute for re-filming. Only the largest COLMAP model is used (the other pieces stay in `colmap_unused/`).

@@ -196,6 +196,7 @@ class FakePipeline:
     def __init__(self, fail_first=False):
         self.calls = []
         self.forces = []
+        self.configs = []
         self.release = threading.Event()
         self.release.set()
         self.fail_first = fail_first
@@ -203,6 +204,7 @@ class FakePipeline:
     def __call__(self, videos, run_dir, config, force=False):
         self.calls.append((list(videos), Path(run_dir), config.preset))
         self.forces.append(force)
+        self.configs.append(config)
         self.release.wait(30)
         # Like run_pipeline, which records the config and the input videos.
         recorded = {

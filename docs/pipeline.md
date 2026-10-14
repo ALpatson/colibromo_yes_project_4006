@@ -1,7 +1,7 @@
 # Reconstruction pipeline (`cpipe`)
 
 Turns one or more phone videos of one room into a 3D Gaussian Splatting scene (`scene.ply`).
-Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-018).
+Code: [pipeline/](../pipeline/). Design decisions: [decisions.md](decisions.md) (D-005 to D-019).
 
 ```
 video(s) ──validate──▶ extract_frames ──▶ poses ──▶ train ──▶ export ──▶ scene.ply
@@ -210,6 +210,9 @@ with `npm run dev` first).
 
 - **This computer only:** it listens on 127.0.0.1, so a phone or another computer cannot
   open it (room videos are private), and it ignores requests from other web pages.
+- **Partial room:** if COLMAP placed too few frames (but at least 20), a **Continue anyway
+  (partial room)** button appears. It reuses COLMAP's result and continues with the placed
+  frames only; the result is marked "PARTIAL ROOM: N of M frames" (D-019).
 - **One run at a time:** Start is disabled while a run is going. There is no cancel button:
   Ctrl+C stops the server (end `brush_app.exe` in Task Manager if it keeps running).
 - **Long runs:** keep the laptop plugged in and set Windows sleep to **Never**.
@@ -250,6 +253,7 @@ data/runs/room1/
 ├── cameras.json             every frame's camera pose in scene.ply's coordinates (for the viewer)
 ├── input/videos.json        ffprobe metadata of each video
 ├── frames.json              every frame: file, source video, index, timestamp
+├── poses_attempt.json       last COLMAP result + the settings it used (for "continue anyway")
 ├── colmap/images/           selected frames, named after their video (bottom_00000.jpg ...)
 ├── colmap/database.db       COLMAP features and matches
 ├── colmap/sparse/0/         camera poses + sparse points (the only model in sparse/)
@@ -359,7 +363,7 @@ decisions D-011 to D-015): a full COLMAP run, Brush training, gsplat training.
 | `'colmap' was not found` | Install it or set `CPIPE_COLMAP` (same for ffmpeg/ffprobe). |
 | `The video is 5.0 s long, but at least 20 s is needed` | Film 1 to 3 minutes (capture guide). |
 | `The video looks static` | The camera must move through the room. |
-| `COLMAP placed only X of Y frames` | Capture problem (fast motion, blur, mirrors, low light, turning on the spot). Try `--set poses.matcher=exhaustive` (slower) or re-film. |
+| `COLMAP placed only X of Y frames` | Capture problem (fast motion, fast turns at corners, blur, mirrors, low light, turning on the spot): re-film. For a preview from the placed frames only: `--set poses.allow_partial=true` (or "Continue anyway" in `cpipe ui`); the room is marked partial and has holes (D-019). |
 | `HDR video ... needs FFmpeg's zscale ... filter(s)` | Install an FFmpeg build with libzimg (gyan.dev "full" on Windows), or `--set frames.hdr_tonemap=false` (washed-out colours). |
 | `Training needs an NVIDIA GPU with CUDA` | Run `--until poses` here and train on Colab, or train with Brush (`--set train.trainer=brush`). |
 | `'brush_app' was not found` | Set `CPIPE_BRUSH` (or `train.brush_exe`) to `brush_app.exe`. |
