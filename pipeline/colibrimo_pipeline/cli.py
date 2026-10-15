@@ -7,6 +7,8 @@ Examples::
     cpipe run --videos data/videos/room2 --output data/runs/room2      # all videos in a folder
     cpipe run --video room1.mp4 --output runs/room1 --until poses     # laptop, no GPU
     cpipe run --video room1.mp4 --output runs/room1 --set poses.matcher=exhaustive
+    cpipe run --output runs/room1        # continue a run folder (e.g. on Colab), no videos
+    cpipe check --output runs/room1      # scene.ply and cameras.json in the same coordinates?
     cpipe config --preset fast                                         # show settings
     cpipe ui                                                           # local web page
 """
@@ -66,7 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         type=Path,
         help="Input video file. Repeat for several videos of the same room "
-        "(e.g. filmed at three heights).",
+        "(e.g. filmed at three heights). Without --video/--videos, the --output "
+        "run folder is continued with the videos its manifest records.",
     )
     run.add_argument(
         "--videos",
@@ -92,6 +95,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "-v", "--verbose", action="store_true", help="Show all tool output."
     )
+
+    check = sub.add_parser(
+        "check",
+        help="Check a finished run: coordinate check and cameras.json (exit 1 if not OK).",
+    )
+    check.add_argument("--output", required=True, type=Path, help="Run folder.")
 
     config = sub.add_parser("config", help="Print the resolved configuration as YAML.")
     _add_config_arguments(config)
@@ -143,6 +152,14 @@ def _ui(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check(run_dir: Path) -> int:
+    from colibrimo_pipeline.check import check_run, describe
+
+    result = check_run(run_dir)
+    print("\n".join(describe(result)))
+    return 0 if result["ok"] else 1
+
+
 def _overrides(args: argparse.Namespace) -> dict:
     overrides = parse_set_overrides(args.set)
     if args.frames is not None:
@@ -157,6 +174,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "ui":
             return _ui(args)
+        if args.command == "check":
+            return _check(args.output)
         config = load_config(args.preset, _overrides(args))
         if args.command == "config":
             print(
@@ -164,9 +183,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
-        videos = collect_videos(args.video, args.videos)
+        videos = (
+            [v.path for v in collect_videos(args.video, args.videos)]
+            if args.video or args.videos
+            else None  # continue the run folder
+        )
         manifest = run_pipeline(
-            [v.path for v in videos],
+            videos,
             args.output,
             config,
             force=args.force,

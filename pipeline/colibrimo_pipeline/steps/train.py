@@ -26,6 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
+from colibrimo_pipeline.check import coordinate_check
 from colibrimo_pipeline.config import TrainConfig
 from colibrimo_pipeline.errors import StepError
 from colibrimo_pipeline.gsplat_compat import apply_gsplat_fixes
@@ -304,15 +305,15 @@ def run_gsplat(ctx: StepContext) -> StepResult:
         env_versions.get("gsplat"),
     )
 
-    data_dir = ctx.manifest.step_output(
-        "poses", "sparse_model"
-    ).parent.parent  # colmap/
+    sparse_model = ctx.manifest.step_output("poses", "sparse_model")  # colmap/sparse/0
+    data_dir = sparse_model.parent.parent  # colmap/
     result_dir = ctx.run_dir / "train"
     shutil.rmtree(result_dir, ignore_errors=True)
 
     ctx.logger.info(
         "Training %d steps with gsplat (%s strategy)...", cfg.max_steps, cfg.strategy
     )
+    start = time.monotonic()
     run_tool(
         build_train_command(python, examples_dir, data_dir, result_dir, cfg),
         step=NAME,
@@ -320,12 +321,35 @@ def run_gsplat(ctx: StepContext) -> StepResult:
         cwd=examples_dir,
         heartbeat_s=60,
     )
+    train_seconds = time.monotonic() - start
 
     ply = expected_ply(result_dir, cfg.max_steps)
     if not ply.is_file():
         raise StepError(NAME, f"Training finished but {ply.name} was not written.")
 
     transform = compute_transform(python, examples_dir, data_dir, cfg.test_every)
+    # Same check as for Brush, after gsplat's normalisation: the transform we
+    # record must be the one gsplat trained in (cameras.json is built with it).
+    check = coordinate_check(
+        read_points3d_xyz(sparse_model / "points3D.bin"),
+        read_vertex_xyz(ply),
+        np.asarray(transform["matrix_4x4"]),
+    )
+    ctx.logger.info(
+        "Coordinate check: median distance from a transformed COLMAP point to the "
+        "nearest splat = %.4f x scene size (pass if < %.3f).",
+        check["median_nearest_splat_rel"],
+        check["threshold_rel"],
+    )
+    if not check["same_coordinates"]:
+        raise StepError(
+            NAME,
+            "The gsplat splat is not where the recorded scene transform puts COLMAP's "
+            "points, so cameras.json would not match scene.ply. See docs/decisions.md "
+            f"D-020. Check: {check}",
+            info={"coordinate_check": check},
+        )
+    transform["coordinate_check"] = check
     transform_path = result_dir / "transform.json"
     transform_path.write_text(json.dumps(transform, indent=2), encoding="utf-8")
 
@@ -341,6 +365,9 @@ def run_gsplat(ctx: StepContext) -> StepResult:
             "seed": TRAINER_SEED,
             "num_gaussians": num_gaussians,
             "ply_size_bytes": ply.stat().st_size,
+            "train_seconds": round(train_seconds, 1),
+            "gpu": {"name": env_versions.get("gpu")},
+            "coordinate_check": check,
         },
         versions={"gpu_env": env_versions},
     )

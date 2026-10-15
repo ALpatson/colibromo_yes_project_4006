@@ -5,6 +5,11 @@ outputs still exist. Once a step actually runs, every later step runs too (its
 inputs may have changed). ``force`` re-runs everything; ``from_step`` re-runs
 from that step onwards; ``until`` stops after the given step (e.g. ``poses`` on
 a laptop without GPU).
+
+Without ``videos``, an existing run folder is continued with the inputs its
+manifest records (e.g. poses computed on a laptop, training on Colab): the
+videos themselves are then only needed if ``validate`` or ``extract_frames``
+must run again.
 """
 
 from __future__ import annotations
@@ -17,12 +22,12 @@ from types import ModuleType
 
 from colibrimo_pipeline.config import PipelineConfig
 from colibrimo_pipeline.errors import ConfigError, PipelineError, StepError
-from colibrimo_pipeline.manifest import Manifest
+from colibrimo_pipeline.manifest import MANIFEST_NAME, Manifest
 from colibrimo_pipeline.steps import export, extract_frames, poses, train, validate
 from colibrimo_pipeline.steps.base import StepContext
 from colibrimo_pipeline.utils.logs import close_logging, setup_logging, step_log_file
 from colibrimo_pipeline.utils.versions import git_commit, pipeline_version, system_info
-from colibrimo_pipeline.utils.videos import VideoInput, collect_videos
+from colibrimo_pipeline.utils.videos import VideoInput, collect_videos, video_name
 
 STEPS: list[ModuleType] = [validate, extract_frames, poses, train, export]
 STEP_NAMES: list[str] = [step.NAME for step in STEPS]
@@ -67,6 +72,30 @@ def _warn_if_inputs_changed(
         )
 
 
+def recorded_inputs(run_dir: Path) -> list[VideoInput]:
+    """The videos (paths and names) recorded in a run folder's manifest.
+
+    Paths are kept as recorded (possibly another computer's, e.g. a Windows
+    laptop's when continuing on Colab).
+    """
+    path = Path(run_dir) / MANIFEST_NAME
+    if not path.is_file():
+        raise ConfigError(
+            f"No input video given and {run_dir} has no {MANIFEST_NAME} to continue: "
+            "give --video (repeatable) or --videos."
+        )
+    recorded = Manifest.load_or_create(run_dir).data.get("input") or {}
+    paths = recorded.get("videos") or (
+        [recorded["video"]] if recorded.get("video") else []
+    )
+    if not paths:
+        raise ConfigError(f"{path} records no input video: give --video or --videos.")
+    names = recorded.get("names") or [
+        video_name(Path(p.replace("\\", "/"))) for p in paths
+    ]
+    return [VideoInput(n, Path(p)) for n, p in zip(names, paths, strict=True)]
+
+
 def _run_step(step: ModuleType, ctx: StepContext, position: str) -> None:
     name, manifest, logger = step.NAME, ctx.manifest, ctx.logger
     logger.info("[%s] %s: starting", position, name)
@@ -103,7 +132,7 @@ def _run_step(step: ModuleType, ctx: StepContext, position: str) -> None:
 
 
 def run_pipeline(
-    videos: str | Path | Sequence[str | Path],
+    videos: str | Path | Sequence[str | Path] | None,
     output_dir: str | Path,
     config: PipelineConfig,
     *,
@@ -116,7 +145,8 @@ def run_pipeline(
     """Run the pipeline on one video or several videos of the same room.
 
     ``videos`` is a path or a list of paths (e.g. the same room filmed at three
-    heights). Results go to ``output_dir``; returns the manifest. Raises
+    heights). Results go to ``output_dir``; returns the manifest. ``videos=None``
+    continues ``output_dir`` with the videos its manifest records. Raises
     StepError (with ``.step``) if a step fails. ``steps`` is only meant for
     tests (to swap in fake steps).
     """
@@ -126,8 +156,9 @@ def run_pipeline(
         if value is not None and value not in names:
             raise ConfigError(f"Unknown step '{value}' for {option}. Steps: {names}")
 
-    inputs = collect_videos(videos)
     run_dir = Path(output_dir).resolve()
+    continuing = videos is None
+    inputs = recorded_inputs(run_dir) if continuing else collect_videos(videos)
     run_dir.mkdir(parents=True, exist_ok=True)
     logger = setup_logging(run_dir / "logs", verbose)
     try:
@@ -136,16 +167,26 @@ def run_pipeline(
         manifest.set_run_info(
             pipeline_version=pipeline_version(),
             git_commit=git_commit(),
-            input={
-                "videos": [str(v.path) for v in inputs],
-                "names": [v.name for v in inputs],
-            },
             config=config.model_dump(mode="json"),
             system=system_info(),
+            until=until,
         )
+        if not continuing:  # a continued run keeps its recorded input as is
+            manifest.set_run_info(
+                input={
+                    "videos": [str(v.path) for v in inputs],
+                    "names": [v.name for v in inputs],
+                }
+            )
         manifest.set_status("running")
         manifest.save()
         logger.info("Run folder: %s (preset '%s')", run_dir, config.preset)
+        if continuing:
+            logger.info(
+                "Continuing with the videos recorded in the manifest (%s); they are "
+                "only read if validate or extract_frames must run again.",
+                ", ".join(v.name for v in inputs),
+            )
 
         start_index = names.index(from_step) if from_step else None
         last_index = names.index(until) if until else len(steps) - 1
