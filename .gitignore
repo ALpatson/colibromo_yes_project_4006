@@ -17,6 +17,9 @@ data/*
 *.spz
 *.ksplat
 *.splat
+# Colab hand-over zips (<room>_for_colab.zip, <room>_colab_result.zip) and COLMAP databases
+*.zip
+database.db
 *.ckpt
 
 # ---- Python ----
