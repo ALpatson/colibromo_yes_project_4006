@@ -2,6 +2,14 @@
 
 One entry per PRD step (newest first). Dates are YYYY-MM-DD.
 
+## 2026-10-15 · Step 1: train on Google Colab after COLMAP on the laptop
+
+- `cpipe run --output <run>` without `--video` continues a run folder with the videos its manifest records (D-020).
+- gsplat's `train` step runs the coordinate check after applying gsplat's scene transform; new `cpipe check --output <run>` (coordinate check, cameras.json count and transform).
+- Colab notebook: installs the `step-1-pipeline` branch, trains `<room>_for_colab.zip` from Drive with gsplat, prints `cpipe check`, writes `<room>_colab_result.zip` to Drive.
+- `cpipe ui`: "Stop after COLMAP (train on Colab)", "Export for Colab" (zip path and size), "Import Colab result" (checked before it replaces anything), "Train on this laptop instead".
+- Docs: step-by-step Colab section in `docs/pipeline.md`. Not yet verified on Colab itself.
+
 ## 2026-10-13 · Step 1: pipeline improvements from manual tests
 
 - Several videos per room (D-010): `--video` repeatable, `--videos <folder>`; per-video validation and metadata; frames shared by duration and named after their video (`bottom_00000.jpg`); `frames.json` records each frame's source video and timestamp.
