@@ -3,6 +3,8 @@
 - uploads: room/file name checks and streaming a video to ``data/uploads/<room>/``;
 - progress: read from the run folder only (``manifest.json`` + ``logs/train.log``);
 - runs: one ``run_pipeline()`` at a time in a background thread, resumable;
+- Colab (D-020): stop a run after COLMAP, zip it for Colab (``data/colab/``),
+  import the trained result back after checking it;
 - viewer: copy ``scene.ply`` + ``cameras.json`` into the viewer's ``public/runs/<room>/``.
 """
 
@@ -18,6 +20,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from colibrimo_pipeline import colab
+from colibrimo_pipeline.check import describe
 from colibrimo_pipeline.config import deep_merge, load_config
 from colibrimo_pipeline.errors import PipelineError, StepError, ToolNotFoundError
 from colibrimo_pipeline.pipeline import STEP_NAMES, run_pipeline
@@ -84,14 +88,20 @@ def save_upload(
     length: int,
     chunk_size: int = 1 << 20,
 ) -> Path:
-    """Stream ``length`` bytes to ``uploads/<room>/<filename>``.
+    """Stream ``length`` bytes to ``uploads/<room>/<filename>``."""
+    target = Path(uploads_dir) / clean_room_name(room) / clean_video_filename(filename)
+    return save_stream(target, stream, length, chunk_size)
+
+
+def save_stream(
+    target: Path, stream: BinaryIO, length: int, chunk_size: int = 1 << 20
+) -> Path:
+    """Stream ``length`` bytes to ``target``.
 
     Written to a ``.part`` file first and renamed at the end, so an interrupted
-    upload is never taken for a video.
+    upload is never taken for a complete file.
     """
-    target_dir = Path(uploads_dir) / clean_room_name(room)
-    target = target_dir / clean_video_filename(filename)
-    target_dir.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".part")
     remaining = length
     with open(partial, "wb") as out:
@@ -278,6 +288,7 @@ def read_progress(run_dir: Path) -> dict[str, Any] | None:
     result = None
     train = recorded.get("train", {})
     export = recorded.get("export", {})
+    imported = manifest.get("imported_result")
     if export.get("status") == "succeeded":
         train_info, export_info = train.get("info", {}), export.get("info", {})
         result = {
@@ -286,6 +297,8 @@ def read_progress(run_dir: Path) -> dict[str, Any] | None:
             "file_size_bytes": export_info.get("file_size_bytes"),
             "num_cameras": export_info.get("num_cameras"),
             "gpu": (train_info.get("gpu") or {}).get("name"),
+            "trainer": train_info.get("trainer"),
+            "imported_at": imported and imported.get("imported_at"),
         }
     # "Continue anyway (partial room)" is offered when poses failed only because
     # too few frames were placed, and enough were placed to build something.
@@ -304,6 +317,8 @@ def read_progress(run_dir: Path) -> dict[str, Any] | None:
         "error": manifest.get("error"),
         "partial_room": manifest.get("partial_room"),
         "can_continue_partial": can_continue_partial,
+        "until": manifest.get("until"),
+        "poses_done": poses_step.get("status") == "succeeded",
         "preset": manifest.get("config", {}).get("preset"),
         "warnings": recorded.get("validate", {}).get("info", {}).get("warnings", []),
         "steps": steps,
@@ -370,10 +385,14 @@ class Runner:
         preset: str,
         resume: bool = False,
         allow_partial: bool = False,
+        until: str | None = None,
     ) -> None:
         """Run the room. A new Start with other videos/labels than the last run
         starts from scratch (old frames carry the old names); Resume reuses steps.
-        ``allow_partial``: continue with a partial room (poses.allow_partial)."""
+        ``allow_partial``: continue with a partial room (poses.allow_partial).
+        ``until="poses"``: stop after COLMAP, to train on Colab."""
+        if until not in (None, *STEP_NAMES):
+            raise UserError(f"Unknown step '{until}'.")
         room = clean_room_name(room)
         if preset not in PRESETS:
             raise UserError(f"Unknown preset '{preset}': use one of {PRESETS}.")
@@ -394,17 +413,21 @@ class Runner:
             self.room = room
             self.errors.pop(room, None)
             self._thread = threading.Thread(
-                target=self._run, args=(room, videos, config, force), daemon=True
+                target=self._run, args=(room, videos, config, force, until), daemon=True
             )
             self._thread.start()
 
-    def resume(self, room: str, allow_partial: bool | None = None) -> None:
+    def resume(
+        self, room: str, allow_partial: bool | None = None, train_here: bool = False
+    ) -> None:
         """Run again on the same folder: finished steps are skipped (resumability).
 
-        A run that already continued as a partial room keeps doing so.
+        A run that already continued as a partial room keeps doing so, and a run
+        meant for Colab still stops after COLMAP, unless ``train_here``.
         """
         room = clean_room_name(room)
-        config = (read_manifest(self.run_dir(room)) or {}).get("config", {})
+        manifest = read_manifest(self.run_dir(room)) or {}
+        config = manifest.get("config", {})
         preset = config.get("preset") or "balanced"
         if allow_partial is None:
             allow_partial = bool(config.get("poses", {}).get("allow_partial"))
@@ -413,6 +436,7 @@ class Runner:
             preset if preset in PRESETS else "balanced",
             resume=True,
             allow_partial=allow_partial,
+            until=None if train_here else manifest.get("until"),
         )
 
     def continue_partial(self, room: str) -> None:
@@ -425,9 +449,16 @@ class Runner:
             )
         self.resume(room, allow_partial=True)
 
-    def _run(self, room: str, videos: list[VideoInput], config, force: bool) -> None:
+    def _run(
+        self,
+        room: str,
+        videos: list[VideoInput],
+        config,
+        force: bool,
+        until: str | None,
+    ) -> None:
         try:
-            self.run_fn(videos, self.run_dir(room), config, force=force)
+            self.run_fn(videos, self.run_dir(room), config, force=force, until=until)
         except StepError:
             pass  # recorded in manifest.json (status, failing step, message)
         except Exception as exc:  # e.g. a tool not found before any step started
@@ -437,6 +468,79 @@ class Runner:
         """Wait for the current run (tests)."""
         if self._thread is not None:
             self._thread.join(timeout)
+
+    # ---- Colab (D-020) ----
+
+    @property
+    def colab_dir(self) -> Path:
+        return self.data_dir / "colab"
+
+    def _not_running(self, room: str) -> None:
+        if self.running and self.room == room:
+            raise Busy(f"'{room}' is running; wait until it has finished.")
+
+    def colab_zip(self, room: str) -> Path:
+        return self.colab_dir / f"{clean_room_name(room)}{colab.FOR_COLAB_SUFFIX}"
+
+    def colab_export_info(self, room: str) -> dict[str, Any] | None:
+        """The room's zip for Colab, if it was made (path, size, time)."""
+        path = self.colab_zip(room)
+        if not path.is_file():
+            return None
+        stat = path.stat()
+        return {
+            "path": str(path.resolve()),
+            "size_bytes": stat.st_size,
+            "mtime": stat.st_mtime,
+        }
+
+    def export_for_colab(self, room: str) -> dict[str, Any]:
+        """Zip what Colab needs to train the room (after COLMAP)."""
+        room = clean_room_name(room)
+        self._not_running(room)
+        try:
+            colab.export_for_colab(self.run_dir(room), self.colab_zip(room))
+        except PipelineError as exc:
+            raise UserError(str(exc)) from exc
+        return self.colab_export_info(room)
+
+    def import_colab_upload(
+        self, room: str, filename: str, stream: BinaryIO, length: int
+    ) -> dict[str, Any]:
+        """One file of a Colab result: the result zip, or scene.ply / cameras.json /
+        manifest.json one by one. Once all three are there, the result is checked
+        and put in the run folder (see colab.import_result)."""
+        room = clean_room_name(room)
+        name = clean_import_filename(filename)
+        self._not_running(room)
+        staging = self.colab_dir / "import" / room
+        target = staging / ("upload.zip" if name.endswith(".zip") else name)
+        save_stream(target, stream, length)
+        try:
+            if name.endswith(".zip"):
+                colab.extract_result_zip(target, staging)
+                target.unlink()
+            waiting = [
+                n for n in colab.REQUIRED_RESULT_FILES if not (staging / n).is_file()
+            ]
+            if waiting:
+                return {"imported": False, "waiting_for": waiting}
+            result = colab.import_result(self.run_dir(room), staging)
+        except PipelineError as exc:
+            shutil.rmtree(staging, ignore_errors=True)  # a retry starts clean
+            raise UserError(str(exc)) from exc
+        return {"imported": True, "check": describe(result)}
+
+
+def clean_import_filename(name: str) -> str:
+    """A result zip, or one of the result's files; nothing else."""
+    base = Path((name or "").replace("\\", "/")).name
+    if base.lower().endswith(".zip") or base in colab.REQUIRED_RESULT_FILES:
+        return base
+    raise UserError(
+        f"'{base}': choose the result zip (…{colab.RESULT_SUFFIX}), or scene.ply, "
+        "cameras.json and manifest.json."
+    )
 
 
 def ui_overrides(

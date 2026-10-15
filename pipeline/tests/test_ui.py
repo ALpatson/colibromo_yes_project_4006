@@ -165,7 +165,11 @@ def test_progress_result_after_export(tmp_path):
             "train": {
                 "status": "succeeded",
                 "duration_s": 3530,
-                "info": {"train_seconds": 3529.4, "gpu": {"name": "NVIDIA T500"}},
+                "info": {
+                    "trainer": "brush",
+                    "train_seconds": 3529.4,
+                    "gpu": {"name": "NVIDIA T500"},
+                },
             },
             "export": {
                 "status": "succeeded",
@@ -184,6 +188,8 @@ def test_progress_result_after_export(tmp_path):
         "file_size_bytes": 66649131,
         "num_cameras": 300,
         "gpu": "NVIDIA T500",
+        "trainer": "brush",
+        "imported_at": None,  # trained here, not imported from Colab
     }
 
 
@@ -197,18 +203,21 @@ class FakePipeline:
         self.calls = []
         self.forces = []
         self.configs = []
+        self.untils = []
         self.release = threading.Event()
         self.release.set()
         self.fail_first = fail_first
 
-    def __call__(self, videos, run_dir, config, force=False):
+    def __call__(self, videos, run_dir, config, force=False, until=None):
         self.calls.append((list(videos), Path(run_dir), config.preset))
         self.forces.append(force)
         self.configs.append(config)
+        self.untils.append(until)
         self.release.wait(30)
-        # Like run_pipeline, which records the config and the input videos.
+        # Like run_pipeline, which records the config, the input videos and until.
         recorded = {
             "preset": config.preset,
+            "until": until,
             "input": {
                 "videos": [str(v.path) for v in videos],
                 "names": [v.name for v in videos],
@@ -289,7 +298,7 @@ def test_start_without_videos_or_bad_preset(tmp_path):
 
 
 def test_unexpected_error_is_kept_for_the_page(tmp_path):
-    def broken(videos, run_dir, config, force=False):
+    def broken(videos, run_dir, config, force=False, until=None):
         raise RuntimeError("colmap not found")
 
     runner = runner_with_videos(tmp_path, broken)

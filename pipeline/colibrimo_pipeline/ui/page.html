@@ -49,6 +49,12 @@
   .stat { background: var(--bg); border-radius: 8px; padding: 10px; }
   .stat b { display: block; font-size: 18px; }
   .hidden { display: none !important; }
+  label.check { display: flex; gap: 8px; align-items: center; font-weight: 400; font-size: 14px;
+                margin: 0 0 12px; }
+  .steps-list { margin: 0 0 12px; padding-left: 20px; font-size: 14px; }
+  .ok { background: #ecf8f0; border: 1px solid #a8dcb9; border-radius: 8px; padding: 10px 12px;
+        font-size: 13px; white-space: pre-wrap; margin: 12px 0; }
+  code.path { word-break: break-all; }
   @media (max-width: 560px) { .row, .stats { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -79,6 +85,7 @@
     <input id="picker" type="file" accept="video/*,.mov,.mp4,.m4v,.mkv" multiple class="hidden">
     <ul class="files" id="files"></ul>
     <div class="note hidden" id="notes"></div>
+    <label class="check"><input type="checkbox" id="colab"> Stop after COLMAP (train on Colab)</label>
     <button id="start" disabled>Start</button>
     <span class="muted" id="startHint"></span>
   </section>
@@ -95,6 +102,24 @@
     <button id="partial" class="secondary hidden">Continue anyway (partial room)</button>
   </section>
 
+  <section class="card hidden" id="colabCard">
+    <h2>Train on Google Colab</h2>
+    <ol class="steps-list">
+      <li><b>Export for Colab</b>: zips the frames and COLMAP's result (no videos, no logs).</li>
+      <li>Upload the zip to Google Drive: <code>MyDrive/colibrimo/runs/<span id="colabRoom"></span>/</code></li>
+      <li>Open <code>pipeline/notebooks/colab_run.ipynb</code> in Colab, T4 GPU, set
+        <code>RUN_NAME</code>, then Run all.</li>
+      <li>Download the result zip from the same Drive folder, then <b>Import Colab result</b>.</li>
+    </ol>
+    <button id="exportColab">Export for Colab</button>
+    <button id="importColab" class="secondary">Import Colab result</button>
+    <button id="trainHere" class="secondary hidden">Train on this laptop instead</button>
+    <input id="importPicker" type="file" accept=".zip,.ply,.json" multiple class="hidden">
+    <div class="muted" id="exportInfo" style="margin-top:10px"></div>
+    <div class="muted" id="importProgress"></div>
+    <div class="ok hidden" id="importOk"></div>
+  </section>
+
   <section class="card hidden" id="resultCard">
     <h2>3. Result</h2>
     <div class="note hidden" id="partialNote"></div>
@@ -103,6 +128,7 @@
       <div class="stat"><span class="muted">Splats</span><b id="rSplats"></b></div>
       <div class="stat"><span class="muted">scene.ply</span><b id="rSize"></b></div>
     </div>
+    <p class="muted" id="rWhere"></p>
     <button id="openViewer">Open in viewer</button>
     <span class="muted" id="viewerHint"></span>
   </section>
@@ -114,6 +140,8 @@ const STEP_LABELS = { validate: "Check videos", extract_frames: "Extract frames"
   poses: "Camera poses (COLMAP)", train: "Train splat", export: "Export scene" };
 let state = null;
 let uploading = 0;
+let importing = false;
+let exporting = false;
 let shownFiles = "";
 
 /** One uploaded video: name, details, and its bottom/middle/up label. */
@@ -217,7 +245,9 @@ function render() {
   }
   const failed = progress && progress.steps.find((s) => s.status === "failed");
   const errorText = (info && info.error) || (failed && `${STEP_LABELS[failed.name]} failed:\n${failed.error}`);
-  const canResume = !state.running && (failed || (info && info.error) ||
+  // A run meant for Colab that stopped after COLMAP as planned has nothing to resume.
+  const waitingForColab = progress && progress.until === "poses" && progress.status === "stopped after 'poses'";
+  const canResume = !state.running && !waitingForColab && (failed || (info && info.error) ||
     (progress && progress.status && progress.status !== "succeeded" && !progress.status.startsWith("running")));
   $("error").classList.toggle("hidden", !errorText || state.running && state.running_room === info.name);
   $("error").textContent = errorText || "";
@@ -231,6 +261,16 @@ function render() {
       `(${Math.round(100 * partial.ratio)}%) were placed by COLMAP. Expect missing parts and holes; re-film for a full room.`;
   }
   if (partial && progress.status !== "succeeded") $("runInfo").textContent += " · PARTIAL";
+  if (waitingForColab) $("runInfo").textContent += " · ready for Colab";
+
+  const roomRunning = state.running && info && state.running_room === info.name;
+  $("colabCard").classList.toggle("hidden", !(progress && progress.poses_done) || roomRunning);
+  if (info) $("colabRoom").textContent = info.name;
+  const exp = info && info.colab_export;
+  $("exportInfo").textContent = exp
+    ? `Zip: ${exp.path} (${fmtBytes(exp.size_bytes)}, made ${new Date(exp.mtime * 1000).toLocaleString()})` : "";
+  $("trainHere").classList.toggle("hidden", !waitingForColab || state.running);
+  $("exportColab").disabled = $("importColab").disabled = importing || exporting;
 
   const result = progress && progress.status === "succeeded" && progress.result;
   $("resultCard").classList.toggle("hidden", !result);
@@ -238,6 +278,9 @@ function render() {
     $("rTime").textContent = fmtDuration(result.train_seconds);
     $("rSplats").textContent = (result.num_gaussians || 0).toLocaleString();
     $("rSize").textContent = fmtBytes(result.file_size_bytes);
+    const where = result.imported_at ? `Trained on Google Colab (${result.gpu || "GPU"}), imported ${new Date(result.imported_at).toLocaleString()}; checks passed.`
+      : `Trained on this computer${result.gpu ? ` (${result.gpu})` : ""}.`;
+    $("rWhere").textContent = `${where} Trainer: ${result.trainer || "?"}.`;
     $("openViewer").disabled = !state.viewer_dir;
     $("viewerHint").textContent = !state.viewer_dir ? " No viewer folder configured (cpipe ui --viewer DIR)."
       : state.viewer_running ? "" : " Start the viewer first: npm run dev in " + state.viewer_dir;
@@ -282,8 +325,64 @@ $("drop").ondrop = (e) => { e.preventDefault(); $("drop").classList.remove("over
 $("room").oninput = () => refresh();
 
 $("start").onclick = async () => {
-  try { await api("POST", "/api/start", { room: room(), preset: $("preset").value }); }
+  try { await api("POST", "/api/start", { room: room(), preset: $("preset").value, colab: $("colab").checked }); }
   catch (err) { alert(err.message); }
+  refresh();
+};
+$("exportColab").onclick = async () => {
+  exporting = true;
+  $("exportInfo").textContent = "Zipping…";
+  render();
+  try {
+    const info = await api("POST", "/api/export-colab", { room: room() });
+    alert(`Ready to upload (${fmtBytes(info.size_bytes)}):\n${info.path}\n\nUpload it to Google Drive: MyDrive/colibrimo/runs/${room()}/`);
+  } catch (err) { alert(err.message); }
+  exporting = false;
+  refresh();
+};
+$("trainHere").onclick = async () => {
+  if (!confirm("Train this room on this laptop with " + state.trainer + " instead of Colab?")) return;
+  try { await api("POST", "/api/resume", { room: room(), here: true }); }
+  catch (err) { alert(err.message); }
+  refresh();
+};
+
+/** Upload one file of a Colab result; resolves with the server's answer. */
+function importFile(file) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `/api/import-colab?room=${encodeURIComponent(room())}&file=${encodeURIComponent(file.name)}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) $("importProgress").textContent = `Uploading ${file.name}: ${Math.round((100 * e.loaded) / e.total)}%`;
+    };
+    xhr.onload = () => {
+      const data = JSON.parse(xhr.responseText || "{}");
+      xhr.status < 300 ? resolve(data) : reject(new Error(data.error || xhr.statusText));
+    };
+    xhr.onerror = () => reject(new Error("Upload failed"));
+    xhr.send(file);
+  });
+}
+$("importColab").onclick = () => $("importPicker").click();
+$("importPicker").onchange = async (e) => {
+  const files = [...e.target.files];
+  e.target.value = "";
+  if (!files.length) return;
+  importing = true;
+  $("importOk").classList.add("hidden");
+  render();
+  try {
+    let answer = null;
+    for (const f of files) answer = await importFile(f);
+    if (answer.imported) {
+      $("importOk").textContent = "Imported. Checks:\n" + answer.check.join("\n");
+      $("importOk").classList.remove("hidden");
+    } else {
+      alert("Still needed: " + answer.waiting_for.join(", ") + ". Choose the result zip, or all three files.");
+    }
+  } catch (err) { alert(err.message); }
+  $("importProgress").textContent = "";
+  importing = false;
   refresh();
 };
 $("resume").onclick = async () => {

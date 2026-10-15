@@ -10,9 +10,12 @@ Routes::
     GET  /                       the page (page.html)
     GET  /api/state?room=NAME    rooms, running run, the room's videos and progress
     PUT  /api/upload?room=&file= one video, raw body (streamed to data/uploads/<room>/)
-    POST /api/start              {"room", "preset"}
-    POST /api/resume             {"room"}
+    PUT  /api/import-colab?room=&file=  Colab result: its zip, or scene.ply /
+                                 cameras.json / manifest.json one by one (D-020)
+    POST /api/start              {"room", "preset", "colab": stop after COLMAP}
+    POST /api/resume             {"room", "here": train here although meant for Colab}
     POST /api/continue-partial   {"room"} (resume with a partial room, D-019)
+    POST /api/export-colab       {"room"} -> zip path and size (D-020)
     POST /api/label              {"room", "file", "label": "bottom"|"middle"|"up"|""}
     POST /api/open-viewer        {"room"} -> {"url"}
 """
@@ -35,6 +38,7 @@ from colibrimo_pipeline.ui.jobs import (
     Busy,
     Runner,
     UserError,
+    clean_import_filename,
     clean_room_name,
     clean_video_filename,
     copy_to_viewer,
@@ -107,6 +111,7 @@ class App:
                 "missing_middle": bool(videos) and "middle" not in labels.values(),
                 "progress": read_progress(runner.run_dir(room)),
                 "error": runner.errors.get(room),
+                "colab_export": runner.colab_export_info(room),
             }
         return data
 
@@ -209,30 +214,34 @@ class Handler(BaseHTTPRequestHandler):
         def action():
             body_read = False
             try:
-                if urlparse(self.path).path != "/api/upload":
+                route = urlparse(self.path).path
+                if route not in ("/api/upload", "/api/import-colab"):
                     raise NotFound
                 query = self._query()
+                room, file = query.get("room", ""), query.get("file", "")
                 length = int(self.headers.get("Content-Length") or -1)
                 if length < 0 or length > MAX_UPLOAD_BYTES:
                     raise UserError("Missing or too large Content-Length.")
                 # Check the names before reading anything.
-                clean_room_name(query.get("room", ""))
-                clean_video_filename(query.get("file", ""))
-                body_read = True
-                path = save_upload(
-                    self.app.runner.uploads_dir,
-                    query.get("room", ""),
-                    query.get("file", ""),
-                    self.rfile,
-                    length,
-                )
+                clean_room_name(room)
+                if route == "/api/upload":
+                    clean_video_filename(file)
+                    body_read = True
+                    path = save_upload(
+                        self.app.runner.uploads_dir, room, file, self.rfile, length
+                    )
+                    reply = {"saved": path.name, "size": path.stat().st_size}
+                else:
+                    clean_import_filename(file)
+                    body_read = True
+                    reply = self.app.runner.import_colab_upload(
+                        room, file, self.rfile, length
+                    )
             except (NotFound, PipelineError):
                 if not body_read:
                     self._discard_body()
                 raise
-            self._json(
-                {"saved": path.name, "size": path.stat().st_size}, HTTPStatus.CREATED
-            )
+            self._json(reply, HTTPStatus.CREATED)
 
         self._handle(action)
 
@@ -243,15 +252,21 @@ class Handler(BaseHTTPRequestHandler):
             runner = self.app.runner
             if route == "/api/start":
                 runner.start(
-                    str(body.get("room", "")), str(body.get("preset", "balanced"))
+                    str(body.get("room", "")),
+                    str(body.get("preset", "balanced")),
+                    until="poses" if body.get("colab") is True else None,
                 )
                 self._json({"started": True})
             elif route == "/api/resume":
-                runner.resume(str(body.get("room", "")))
+                runner.resume(
+                    str(body.get("room", "")), train_here=body.get("here") is True
+                )
                 self._json({"started": True})
             elif route == "/api/continue-partial":
                 runner.continue_partial(str(body.get("room", "")))
                 self._json({"started": True})
+            elif route == "/api/export-colab":
+                self._json(runner.export_for_colab(str(body.get("room", ""))))
             elif route == "/api/label":
                 labels = set_label(
                     runner.uploads_dir,
