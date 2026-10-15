@@ -1,414 +1,769 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Room pipeline</title>
-<style>
-  :root { --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #667085; --line: #e3e6eb;
-          --accent: #2f6fec; --ok: #1f9d55; --bad: #d64545; --run: #c98a00; }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-         background: var(--bg); color: var(--text); }
-  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  .sub { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-          padding: 18px; margin-bottom: 16px; }
-  .card h2 { font-size: 16px; margin: 0 0 12px; }
-  .note { background: #fff7e6; border: 1px solid #f3d38a; border-radius: 8px;
-          padding: 10px 12px; font-size: 14px; margin-bottom: 16px; }
-  label { display: block; font-weight: 600; font-size: 13px; margin: 0 0 6px; }
-  input[type=text], select { width: 100%; padding: 9px 10px; border: 1px solid var(--line);
-          border-radius: 7px; font: inherit; background: #fff; }
-  .row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 14px; }
-  #drop { border: 2px dashed #b9c2d0; border-radius: 10px; padding: 22px; text-align: center;
-          color: var(--muted); cursor: pointer; margin-bottom: 10px; }
-  #drop.over { border-color: var(--accent); background: #eef3ff; color: var(--text); }
-  ul.files { list-style: none; padding: 0; margin: 0 0 14px; font-size: 14px; }
-  ul.files li { display: flex; justify-content: space-between; padding: 5px 0;
-                border-bottom: 1px solid var(--line); }
-  .bar { height: 6px; background: #e6e9ef; border-radius: 3px; overflow: hidden; margin-top: 4px; }
-  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
-  button { font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 7px; border: none;
-           background: var(--accent); color: #fff; cursor: pointer; }
-  button:disabled { background: #b9c2d0; cursor: not-allowed; }
-  button.secondary { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
-  .steps { list-style: none; padding: 0; margin: 0; }
-  .steps li { display: grid; grid-template-columns: 24px 1fr auto; gap: 8px; padding: 7px 0;
-              border-bottom: 1px solid var(--line); align-items: center; }
-  .dot { width: 12px; height: 12px; border-radius: 50%; background: #c9cfd8; margin-left: 4px; }
-  .succeeded .dot { background: var(--ok); }
-  .failed .dot { background: var(--bad); }
-  .running .dot { background: var(--run); animation: pulse 1s infinite alternate; }
-  @keyframes pulse { to { opacity: .35; } }
-  .muted { color: var(--muted); font-size: 13px; }
-  .error { background: #fdeeee; border: 1px solid #f2b8b8; color: #7a1f1f; border-radius: 8px;
-           padding: 10px 12px; white-space: pre-wrap; font-size: 13px; margin: 12px 0; }
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
-  .stat { background: var(--bg); border-radius: 8px; padding: 10px; }
-  .stat b { display: block; font-size: 18px; }
-  .hidden { display: none !important; }
-  label.check { display: flex; gap: 8px; align-items: center; font-weight: 400; font-size: 14px;
-                margin: 0 0 12px; }
-  .steps-list { margin: 0 0 12px; padding-left: 20px; font-size: 14px; }
-  .ok { background: #ecf8f0; border: 1px solid #a8dcb9; border-radius: 8px; padding: 10px 12px;
-        font-size: 13px; white-space: pre-wrap; margin: 12px 0; }
-  code.path { word-break: break-all; }
-  @media (max-width: 560px) { .row, .stats { grid-template-columns: 1fr; } }
-</style>
-</head>
-<body>
-<main>
-  <h1>Room pipeline</h1>
-  <p class="sub">Local developer tool for the team (not the Stage 1 backend). Runs on this computer
-    only: videos stay in <code>data/</code>. Trainer: <span id="trainer">…</span>.</p>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Room pipeline</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --card: #fff;
+        --text: #1d2330;
+        --muted: #667085;
+        --line: #e3e6eb;
+        --accent: #2f6fec;
+        --ok: #1f9d55;
+        --bad: #d64545;
+        --run: #c98a00;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font:
+          15px/1.45 system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 4px;
+      }
+      .sub {
+        color: var(--muted);
+        margin: 0 0 18px;
+        font-size: 13px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 18px;
+        margin-bottom: 16px;
+      }
+      .card h2 {
+        font-size: 16px;
+        margin: 0 0 12px;
+      }
+      .note {
+        background: #fff7e6;
+        border: 1px solid #f3d38a;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 14px;
+        margin-bottom: 16px;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        font-size: 13px;
+        margin: 0 0 6px;
+      }
+      input[type="text"],
+      select {
+        width: 100%;
+        padding: 9px 10px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        font: inherit;
+        background: #fff;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+      #drop {
+        border: 2px dashed #b9c2d0;
+        border-radius: 10px;
+        padding: 22px;
+        text-align: center;
+        color: var(--muted);
+        cursor: pointer;
+        margin-bottom: 10px;
+      }
+      #drop.over {
+        border-color: var(--accent);
+        background: #eef3ff;
+        color: var(--text);
+      }
+      ul.files {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 14px;
+        font-size: 14px;
+      }
+      ul.files li {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .bar {
+        height: 6px;
+        background: #e6e9ef;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 4px;
+      }
+      .bar > div {
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+        transition: width 0.2s;
+      }
+      button {
+        font: inherit;
+        font-weight: 600;
+        padding: 9px 16px;
+        border-radius: 7px;
+        border: none;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: #b9c2d0;
+        cursor: not-allowed;
+      }
+      button.secondary {
+        background: #fff;
+        color: var(--accent);
+        border: 1px solid var(--accent);
+      }
+      .steps {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .steps li {
+        display: grid;
+        grid-template-columns: 24px 1fr auto;
+        gap: 8px;
+        padding: 7px 0;
+        border-bottom: 1px solid var(--line);
+        align-items: center;
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #c9cfd8;
+        margin-left: 4px;
+      }
+      .succeeded .dot {
+        background: var(--ok);
+      }
+      .failed .dot {
+        background: var(--bad);
+      }
+      .running .dot {
+        background: var(--run);
+        animation: pulse 1s infinite alternate;
+      }
+      @keyframes pulse {
+        to {
+          opacity: 0.35;
+        }
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .error {
+        background: #fdeeee;
+        border: 1px solid #f2b8b8;
+        color: #7a1f1f;
+        border-radius: 8px;
+        padding: 10px 12px;
+        white-space: pre-wrap;
+        font-size: 13px;
+        margin: 12px 0;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .stat {
+        background: var(--bg);
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .stat b {
+        display: block;
+        font-size: 18px;
+      }
+      .hidden {
+        display: none !important;
+      }
+      label.check {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-weight: 400;
+        font-size: 14px;
+        margin: 0 0 12px;
+      }
+      .steps-list {
+        margin: 0 0 12px;
+        padding-left: 20px;
+        font-size: 14px;
+      }
+      .ok {
+        background: #ecf8f0;
+        border: 1px solid #a8dcb9;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 13px;
+        white-space: pre-wrap;
+        margin: 12px 0;
+      }
+      code.path {
+        word-break: break-all;
+      }
+      @media (max-width: 560px) {
+        .row,
+        .stats {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Room pipeline</h1>
+      <p class="sub">
+        Local developer tool for the team (not the Stage 1 backend). Runs on this computer only:
+        videos stay in <code>data/</code>. Trainer: <span id="trainer">…</span>.
+      </p>
 
-  <div class="note">⏳ Long runs (COLMAP + training can take an hour or more): keep the laptop
-    <b>plugged in</b> and set Windows sleep to <b>Never</b> (Settings → System → Power).</div>
-
-  <section class="card">
-    <h2>1. Room and videos</h2>
-    <div class="row">
-      <div>
-        <label for="room">Room name</label>
-        <input id="room" type="text" list="rooms" placeholder="e.g. kitchen_2" autocomplete="off">
-        <datalist id="rooms"></datalist>
+      <div class="note">
+        ⏳ Long runs (COLMAP + training can take an hour or more): keep the laptop
+        <b>plugged in</b> and set Windows sleep to <b>Never</b> (Settings → System → Power).
       </div>
-      <div>
-        <label for="preset">Preset</label>
-        <select id="preset"></select>
-      </div>
-    </div>
-    <div id="drop">Drop videos here (one per height), or click to choose. Then label each one
-      bottom / middle / up below.</div>
-    <input id="picker" type="file" accept="video/*,.mov,.mp4,.m4v,.mkv" multiple class="hidden">
-    <ul class="files" id="files"></ul>
-    <div class="note hidden" id="notes"></div>
-    <label class="check"><input type="checkbox" id="colab"> Stop after COLMAP (train on Colab)</label>
-    <button id="start" disabled>Start</button>
-    <span class="muted" id="startHint"></span>
-  </section>
 
-  <section class="card hidden" id="progressCard">
-    <h2>2. Progress <span class="muted" id="runInfo"></span></h2>
-    <ul class="steps" id="steps"></ul>
-    <div id="brush" class="hidden">
-      <div class="muted" id="brushText"></div>
-      <div class="bar"><div id="brushBar"></div></div>
-    </div>
-    <div class="error hidden" id="error"></div>
-    <button id="resume" class="secondary hidden">Resume</button>
-    <button id="partial" class="secondary hidden">Continue anyway (partial room)</button>
-  </section>
+      <section class="card">
+        <h2>1. Room and videos</h2>
+        <div class="row">
+          <div>
+            <label for="room">Room name</label>
+            <input
+              id="room"
+              type="text"
+              list="rooms"
+              placeholder="e.g. kitchen_2"
+              autocomplete="off"
+            />
+            <datalist id="rooms"></datalist>
+          </div>
+          <div>
+            <label for="preset">Preset</label>
+            <select id="preset"></select>
+          </div>
+        </div>
+        <div id="drop">
+          Drop videos here (one per height), or click to choose. Then label each one bottom / middle
+          / up below.
+        </div>
+        <input
+          id="picker"
+          type="file"
+          accept="video/*,.mov,.mp4,.m4v,.mkv"
+          multiple
+          class="hidden"
+        />
+        <ul class="files" id="files"></ul>
+        <div class="note hidden" id="notes"></div>
+        <label class="check"
+          ><input type="checkbox" id="colab" /> Stop after COLMAP (train on Colab)</label
+        >
+        <button id="start" disabled>Start</button>
+        <span class="muted" id="startHint"></span>
+      </section>
 
-  <section class="card hidden" id="colabCard">
-    <h2>Train on Google Colab</h2>
-    <ol class="steps-list">
-      <li><b>Export for Colab</b>: zips the frames and COLMAP's result (no videos, no logs).</li>
-      <li>Upload the zip to Google Drive: <code>MyDrive/colibrimo/runs/<span id="colabRoom"></span>/</code></li>
-      <li>Open <code>pipeline/notebooks/colab_run.ipynb</code> in Colab, T4 GPU, set
-        <code>RUN_NAME</code>, then Run all.</li>
-      <li>Download the result zip from the same Drive folder, then <b>Import Colab result</b>.</li>
-    </ol>
-    <button id="exportColab">Export for Colab</button>
-    <button id="importColab" class="secondary">Import Colab result</button>
-    <button id="trainHere" class="secondary hidden">Train on this laptop instead</button>
-    <input id="importPicker" type="file" accept=".zip,.ply,.json" multiple class="hidden">
-    <div class="muted" id="exportInfo" style="margin-top:10px"></div>
-    <div class="muted" id="importProgress"></div>
-    <div class="ok hidden" id="importOk"></div>
-  </section>
+      <section class="card hidden" id="progressCard">
+        <h2>2. Progress <span class="muted" id="runInfo"></span></h2>
+        <ul class="steps" id="steps"></ul>
+        <div id="brush" class="hidden">
+          <div class="muted" id="brushText"></div>
+          <div class="bar"><div id="brushBar"></div></div>
+        </div>
+        <div class="error hidden" id="error"></div>
+        <button id="resume" class="secondary hidden">Resume</button>
+        <button id="partial" class="secondary hidden">Continue anyway (partial room)</button>
+      </section>
 
-  <section class="card hidden" id="resultCard">
-    <h2>3. Result</h2>
-    <div class="note hidden" id="partialNote"></div>
-    <div class="stats">
-      <div class="stat"><span class="muted">Training time</span><b id="rTime"></b></div>
-      <div class="stat"><span class="muted">Splats</span><b id="rSplats"></b></div>
-      <div class="stat"><span class="muted">scene.ply</span><b id="rSize"></b></div>
-    </div>
-    <p class="muted" id="rWhere"></p>
-    <button id="openViewer">Open in viewer</button>
-    <span class="muted" id="viewerHint"></span>
-  </section>
-</main>
+      <section class="card hidden" id="colabCard">
+        <h2>Train on Google Colab</h2>
+        <ol class="steps-list">
+          <li>
+            <b>Export for Colab</b>: zips the frames and COLMAP's result (no videos, no logs).
+          </li>
+          <li>
+            Upload the zip to Google Drive:
+            <code>MyDrive/colibrimo/runs/<span id="colabRoom"></span>/</code>
+          </li>
+          <li>
+            Open <code>pipeline/notebooks/colab_run.ipynb</code> in Colab, T4 GPU, set
+            <code>RUN_NAME</code>, then Run all.
+          </li>
+          <li>
+            Download the result zip from the same Drive folder, then <b>Import Colab result</b>.
+          </li>
+        </ol>
+        <button id="exportColab">Export for Colab</button>
+        <button id="importColab" class="secondary">Import Colab result</button>
+        <button id="trainHere" class="secondary hidden">Train on this laptop instead</button>
+        <input id="importPicker" type="file" accept=".zip,.ply,.json" multiple class="hidden" />
+        <div class="muted" id="exportInfo" style="margin-top: 10px"></div>
+        <div class="muted" id="importProgress"></div>
+        <div class="ok hidden" id="importOk"></div>
+      </section>
 
-<script>
-const $ = (id) => document.getElementById(id);
-const STEP_LABELS = { validate: "Check videos", extract_frames: "Extract frames",
-  poses: "Camera poses (COLMAP)", train: "Train splat", export: "Export scene" };
-let state = null;
-let uploading = 0;
-let importing = false;
-let exporting = false;
-let shownFiles = "";
+      <section class="card hidden" id="resultCard">
+        <h2>3. Result</h2>
+        <div class="note hidden" id="partialNote"></div>
+        <div class="stats">
+          <div class="stat"><span class="muted">Training time</span><b id="rTime"></b></div>
+          <div class="stat"><span class="muted">Splats</span><b id="rSplats"></b></div>
+          <div class="stat"><span class="muted">scene.ply</span><b id="rSize"></b></div>
+        </div>
+        <p class="muted" id="rWhere"></p>
+        <button id="openViewer">Open in viewer</button>
+        <span class="muted" id="viewerHint"></span>
+      </section>
+    </main>
 
-/** One uploaded video: name, details, and its bottom/middle/up label. */
-function fileRow(f) {
-  const li = document.createElement("li");
-  const left = document.createElement("span");
-  left.textContent = f.name;
-  const d = f.details;
-  const info = document.createElement("span");
-  info.className = "muted";
-  info.textContent = (d ? ` · ${d.orientation} ${d.width}×${d.height} · ${fmtDuration(d.duration_s)} · ${Math.round(d.fps || 0)} fps · ${d.codec}${d.hdr ? " HDR" : ""}` : "") + ` · ${fmtBytes(f.size)}`;
-  left.appendChild(info);
-  const select = document.createElement("select");
-  select.style.width = "auto";
-  for (const [value, text] of [["", "no label"], ["bottom", "bottom"], ["middle", "middle (eye height)"], ["up", "up"]]) {
-    select.add(new Option(text, value, false, value === f.label));
-  }
-  select.onchange = async () => {
-    try { await api("POST", "/api/label", { room: room(), file: f.name, label: select.value }); }
-    catch (err) { alert(err.message); }
-    shownFiles = "";
-    refresh();
-  };
-  li.append(left, select);
-  return li;
-}
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const STEP_LABELS = {
+        validate: "Check videos",
+        extract_frames: "Extract frames",
+        poses: "Camera poses (COLMAP)",
+        train: "Train splat",
+        export: "Export scene",
+      };
+      let state = null;
+      let uploading = 0;
+      let importing = false;
+      let exporting = false;
+      let shownFiles = "";
 
-const fmtDuration = (s) => {
-  if (s == null) return "";
-  s = Math.round(s);
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
-  return h ? `${h} h ${m} min` : m ? `${m} min ${sec} s` : `${sec} s`;
-};
-const fmtBytes = (b) => b == null ? "" : b > 1e9 ? (b / 1e9).toFixed(2) + " GB"
-  : b > 1e6 ? (b / 1e6).toFixed(1) + " MB" : (b / 1e3).toFixed(0) + " kB";
-const room = () => $("room").value.trim().replace(/\s+/g, "_");
+      /** One uploaded video: name, details, and its bottom/middle/up label. */
+      function fileRow(f) {
+        const li = document.createElement("li");
+        const left = document.createElement("span");
+        left.textContent = f.name;
+        const d = f.details;
+        const info = document.createElement("span");
+        info.className = "muted";
+        info.textContent =
+          (d
+            ? ` · ${d.orientation} ${d.width}×${d.height} · ${fmtDuration(d.duration_s)} · ${Math.round(d.fps || 0)} fps · ${d.codec}${d.hdr ? " HDR" : ""}`
+            : "") + ` · ${fmtBytes(f.size)}`;
+        left.appendChild(info);
+        const select = document.createElement("select");
+        select.style.width = "auto";
+        for (const [value, text] of [
+          ["", "no label"],
+          ["bottom", "bottom"],
+          ["middle", "middle (eye height)"],
+          ["up", "up"],
+        ]) {
+          select.add(new Option(text, value, false, value === f.label));
+        }
+        select.onchange = async () => {
+          try {
+            await api("POST", "/api/label", { room: room(), file: f.name, label: select.value });
+          } catch (err) {
+            alert(err.message);
+          }
+          shownFiles = "";
+          refresh();
+        };
+        li.append(left, select);
+        return li;
+      }
 
-async function api(method, path, body) {
-  const res = await fetch(path, { method, headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  return data;
-}
+      const fmtDuration = (s) => {
+        if (s == null) return "";
+        s = Math.round(s);
+        const h = Math.floor(s / 3600),
+          m = Math.floor((s % 3600) / 60),
+          sec = s % 60;
+        return h ? `${h} h ${m} min` : m ? `${m} min ${sec} s` : `${sec} s`;
+      };
+      const fmtBytes = (b) =>
+        b == null
+          ? ""
+          : b > 1e9
+            ? (b / 1e9).toFixed(2) + " GB"
+            : b > 1e6
+              ? (b / 1e6).toFixed(1) + " MB"
+              : (b / 1e3).toFixed(0) + " kB";
+      const room = () => $("room").value.trim().replace(/\s+/g, "_");
 
-async function refresh() {
-  try {
-    state = await api("GET", "/api/state" + (room() ? `?room=${encodeURIComponent(room())}` : ""));
-  } catch (err) {
-    state = null; // e.g. an invalid room name while typing
-  }
-  render();
-}
+      async function api(method, path, body) {
+        const res = await fetch(path, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        return data;
+      }
 
-function render() {
-  if (!state) { $("start").disabled = true; return; }
-  $("trainer").textContent = state.trainer;
-  if (!$("preset").options.length) {
-    for (const p of state.presets) $("preset").add(new Option(p, p, p === "balanced", p === "balanced"));
-  }
-  $("rooms").innerHTML = state.rooms.map((r) => `<option value="${r}">`).join("");
+      async function refresh() {
+        try {
+          state = await api(
+            "GET",
+            "/api/state" + (room() ? `?room=${encodeURIComponent(room())}` : ""),
+          );
+        } catch (err) {
+          state = null; // e.g. an invalid room name while typing
+        }
+        render();
+      }
 
-  const info = state.room;
-  const files = info ? info.videos : [];
-  // Not redrawn during uploads (they show their own progress rows), nor when nothing
-  // changed (so an open label menu isn't closed by the 2-second refresh).
-  const signature = JSON.stringify(files);
-  if (!uploading && signature !== shownFiles) {
-    shownFiles = signature;
-    $("files").innerHTML = "";
-    for (const f of files) $("files").appendChild(fileRow(f));
-  }
-  const notes = [];
-  if (info && info.mixed_orientation) notes.push("These videos mix portrait and landscape. Film all passes the same way (landscape recommended): mixed orientations make the 3D reconstruction much weaker.");
-  if (info && info.missing_middle) notes.push("No video is labelled \"middle\": the viewer takes the eye height from it.");
-  for (const w of (info && info.progress && info.progress.warnings) || []) notes.push(w);
-  $("notes").classList.toggle("hidden", !notes.length);
-  $("notes").innerHTML = "";
-  for (const n of notes) { const p = document.createElement("div"); p.textContent = "⚠ " + n; $("notes").appendChild(p); }
+      function render() {
+        if (!state) {
+          $("start").disabled = true;
+          return;
+        }
+        $("trainer").textContent = state.trainer;
+        if (!$("preset").options.length) {
+          for (const p of state.presets)
+            $("preset").add(new Option(p, p, p === "balanced", p === "balanced"));
+        }
+        $("rooms").innerHTML = state.rooms.map((r) => `<option value="${r}">`).join("");
 
-  const busy = state.running || uploading > 0;
-  $("start").disabled = busy || !files.length;
-  $("startHint").textContent = state.running
-    ? ` A run is going (${state.running_room}); Start is disabled until it finishes.`
-    : uploading ? " Uploading…" : !room() ? " Enter a room name." : !files.length ? " Add videos first." : "";
+        const info = state.room;
+        const files = info ? info.videos : [];
+        // Not redrawn during uploads (they show their own progress rows), nor when nothing
+        // changed (so an open label menu isn't closed by the 2-second refresh).
+        const signature = JSON.stringify(files);
+        if (!uploading && signature !== shownFiles) {
+          shownFiles = signature;
+          $("files").innerHTML = "";
+          for (const f of files) $("files").appendChild(fileRow(f));
+        }
+        const notes = [];
+        if (info && info.mixed_orientation)
+          notes.push(
+            "These videos mix portrait and landscape. Film all passes the same way (landscape recommended): mixed orientations make the 3D reconstruction much weaker.",
+          );
+        if (info && info.missing_middle)
+          notes.push('No video is labelled "middle": the viewer takes the eye height from it.');
+        for (const w of (info && info.progress && info.progress.warnings) || []) notes.push(w);
+        $("notes").classList.toggle("hidden", !notes.length);
+        $("notes").innerHTML = "";
+        for (const n of notes) {
+          const p = document.createElement("div");
+          p.textContent = "⚠ " + n;
+          $("notes").appendChild(p);
+        }
 
-  const progress = info && info.progress;
-  $("progressCard").classList.toggle("hidden", !progress && !(info && info.error));
-  if (progress) {
-    $("runInfo").textContent = `· ${progress.preset || ""} · ${progress.status || ""}`;
-    $("steps").innerHTML = progress.steps.map((s) => `<li class="${s.status}">
+        const busy = state.running || uploading > 0;
+        $("start").disabled = busy || !files.length;
+        $("startHint").textContent = state.running
+          ? ` A run is going (${state.running_room}); Start is disabled until it finishes.`
+          : uploading
+            ? " Uploading…"
+            : !room()
+              ? " Enter a room name."
+              : !files.length
+                ? " Add videos first."
+                : "";
+
+        const progress = info && info.progress;
+        $("progressCard").classList.toggle("hidden", !progress && !(info && info.error));
+        if (progress) {
+          $("runInfo").textContent = `· ${progress.preset || ""} · ${progress.status || ""}`;
+          $("steps").innerHTML = progress.steps
+            .map(
+              (s) => `<li class="${s.status}">
         <span class="dot"></span><span>${STEP_LABELS[s.name] || s.name}</span>
-        <span class="muted">${s.status === "succeeded" ? fmtDuration(s.duration_s) : s.status}</span></li>`).join("");
-    const b = progress.brush;
-    $("brush").classList.toggle("hidden", !b);
-    if (b) {
-      $("brushText").textContent = `Brush: step ${b.step.toLocaleString()} / ${(b.total || 0).toLocaleString()}` +
-        (b.splats ? `, ${b.splats.toLocaleString()} splats` : " (starting…)");
-      $("brushBar").style.width = b.total ? `${(100 * b.step) / b.total}%` : "0";
-    }
-  }
-  const failed = progress && progress.steps.find((s) => s.status === "failed");
-  const errorText = (info && info.error) || (failed && `${STEP_LABELS[failed.name]} failed:\n${failed.error}`);
-  // A run meant for Colab that stopped after COLMAP as planned has nothing to resume.
-  const waitingForColab = progress && progress.until === "poses" && progress.status === "stopped after 'poses'";
-  const canResume = !state.running && !waitingForColab && (failed || (info && info.error) ||
-    (progress && progress.status && progress.status !== "succeeded" && !progress.status.startsWith("running")));
-  $("error").classList.toggle("hidden", !errorText || state.running && state.running_room === info.name);
-  $("error").textContent = errorText || "";
-  $("resume").classList.toggle("hidden", !canResume || !progress);
-  $("partial").classList.toggle("hidden", state.running || !(progress && progress.can_continue_partial));
+        <span class="muted">${s.status === "succeeded" ? fmtDuration(s.duration_s) : s.status}</span></li>`,
+            )
+            .join("");
+          const b = progress.brush;
+          $("brush").classList.toggle("hidden", !b);
+          if (b) {
+            $("brushText").textContent =
+              `Brush: step ${b.step.toLocaleString()} / ${(b.total || 0).toLocaleString()}` +
+              (b.splats ? `, ${b.splats.toLocaleString()} splats` : " (starting…)");
+            $("brushBar").style.width = b.total ? `${(100 * b.step) / b.total}%` : "0";
+          }
+        }
+        const failed = progress && progress.steps.find((s) => s.status === "failed");
+        const errorText =
+          (info && info.error) ||
+          (failed && `${STEP_LABELS[failed.name]} failed:\n${failed.error}`);
+        // A run meant for Colab that stopped after COLMAP as planned has nothing to resume.
+        const waitingForColab =
+          progress && progress.until === "poses" && progress.status === "stopped after 'poses'";
+        const canResume =
+          !state.running &&
+          !waitingForColab &&
+          (failed ||
+            (info && info.error) ||
+            (progress &&
+              progress.status &&
+              progress.status !== "succeeded" &&
+              !progress.status.startsWith("running")));
+        $("error").classList.toggle(
+          "hidden",
+          !errorText || (state.running && state.running_room === info.name),
+        );
+        $("error").textContent = errorText || "";
+        $("resume").classList.toggle("hidden", !canResume || !progress);
+        $("partial").classList.toggle(
+          "hidden",
+          state.running || !(progress && progress.can_continue_partial),
+        );
 
-  const partial = progress && progress.partial_room;
-  $("partialNote").classList.toggle("hidden", !partial);
-  if (partial) {
-    $("partialNote").textContent = `⚠ PARTIAL ROOM: only ${partial.frames_placed} of ${partial.frames_total} frames ` +
-      `(${Math.round(100 * partial.ratio)}%) were placed by COLMAP. Expect missing parts and holes; re-film for a full room.`;
-  }
-  if (partial && progress.status !== "succeeded") $("runInfo").textContent += " · PARTIAL";
-  if (waitingForColab) $("runInfo").textContent += " · ready for Colab";
+        const partial = progress && progress.partial_room;
+        $("partialNote").classList.toggle("hidden", !partial);
+        if (partial) {
+          $("partialNote").textContent =
+            `⚠ PARTIAL ROOM: only ${partial.frames_placed} of ${partial.frames_total} frames ` +
+            `(${Math.round(100 * partial.ratio)}%) were placed by COLMAP. Expect missing parts and holes; re-film for a full room.`;
+        }
+        if (partial && progress.status !== "succeeded") $("runInfo").textContent += " · PARTIAL";
+        if (waitingForColab) $("runInfo").textContent += " · ready for Colab";
 
-  const roomRunning = state.running && info && state.running_room === info.name;
-  $("colabCard").classList.toggle("hidden", !(progress && progress.poses_done) || roomRunning);
-  if (info) $("colabRoom").textContent = info.name;
-  const exp = info && info.colab_export;
-  $("exportInfo").textContent = exp
-    ? `Zip: ${exp.path} (${fmtBytes(exp.size_bytes)}, made ${new Date(exp.mtime * 1000).toLocaleString()})` : "";
-  $("trainHere").classList.toggle("hidden", !waitingForColab || state.running);
-  $("exportColab").disabled = $("importColab").disabled = importing || exporting;
+        const roomRunning = state.running && info && state.running_room === info.name;
+        $("colabCard").classList.toggle(
+          "hidden",
+          !(progress && progress.poses_done) || roomRunning,
+        );
+        if (info) $("colabRoom").textContent = info.name;
+        const exp = info && info.colab_export;
+        $("exportInfo").textContent = exp
+          ? `Zip: ${exp.path} (${fmtBytes(exp.size_bytes)}, made ${new Date(exp.mtime * 1000).toLocaleString()})`
+          : "";
+        $("trainHere").classList.toggle("hidden", !waitingForColab || state.running);
+        $("exportColab").disabled = $("importColab").disabled = importing || exporting;
 
-  const result = progress && progress.status === "succeeded" && progress.result;
-  $("resultCard").classList.toggle("hidden", !result);
-  if (result) {
-    $("rTime").textContent = fmtDuration(result.train_seconds);
-    $("rSplats").textContent = (result.num_gaussians || 0).toLocaleString();
-    $("rSize").textContent = fmtBytes(result.file_size_bytes);
-    const where = result.imported_at ? `Trained on Google Colab (${result.gpu || "GPU"}), imported ${new Date(result.imported_at).toLocaleString()}; checks passed.`
-      : `Trained on this computer${result.gpu ? ` (${result.gpu})` : ""}.`;
-    $("rWhere").textContent = `${where} Trainer: ${result.trainer || "?"}.`;
-    $("openViewer").disabled = !state.viewer_dir;
-    $("viewerHint").textContent = !state.viewer_dir ? " No viewer folder configured (cpipe ui --viewer DIR)."
-      : state.viewer_running ? "" : " Start the viewer first: npm run dev in " + state.viewer_dir;
-  }
-}
+        const result = progress && progress.status === "succeeded" && progress.result;
+        $("resultCard").classList.toggle("hidden", !result);
+        if (result) {
+          $("rTime").textContent = fmtDuration(result.train_seconds);
+          $("rSplats").textContent = (result.num_gaussians || 0).toLocaleString();
+          $("rSize").textContent = fmtBytes(result.file_size_bytes);
+          const where = result.imported_at
+            ? `Trained on Google Colab (${result.gpu || "GPU"}), imported ${new Date(result.imported_at).toLocaleString()}; checks passed.`
+            : `Trained on this computer${result.gpu ? ` (${result.gpu})` : ""}.`;
+          $("rWhere").textContent = `${where} Trainer: ${result.trainer || "?"}.`;
+          $("openViewer").disabled = !state.viewer_dir;
+          $("viewerHint").textContent = !state.viewer_dir
+            ? " No viewer folder configured (cpipe ui --viewer DIR)."
+            : state.viewer_running
+              ? ""
+              : " Start the viewer first: npm run dev in " + state.viewer_dir;
+        }
+      }
 
-function upload(file) {
-  return new Promise((resolve, reject) => {
-    const li = document.createElement("li");
-    li.innerHTML = `<span></span><span class="muted" style="width:40%"><div class="bar"><div></div></div></span>`;
-    li.firstChild.textContent = file.name; // as text: never interpret a file name as HTML
-    $("files").appendChild(li);
-    const bar = li.querySelector(".bar > div");
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `/api/upload?room=${encodeURIComponent(room())}&file=${encodeURIComponent(file.name)}`);
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) bar.style.width = `${(100 * e.loaded) / e.total}%`; };
-    xhr.onload = () => xhr.status < 300 ? resolve() : reject(new Error(JSON.parse(xhr.responseText || "{}").error || xhr.statusText));
-    xhr.onerror = () => reject(new Error("Upload failed"));
-    xhr.send(file);
-  });
-}
+      function upload(file) {
+        return new Promise((resolve, reject) => {
+          const li = document.createElement("li");
+          li.innerHTML = `<span></span><span class="muted" style="width:40%"><div class="bar"><div></div></div></span>`;
+          li.firstChild.textContent = file.name; // as text: never interpret a file name as HTML
+          $("files").appendChild(li);
+          const bar = li.querySelector(".bar > div");
+          const xhr = new XMLHttpRequest();
+          xhr.open(
+            "PUT",
+            `/api/upload?room=${encodeURIComponent(room())}&file=${encodeURIComponent(file.name)}`,
+          );
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) bar.style.width = `${(100 * e.loaded) / e.total}%`;
+          };
+          xhr.onload = () =>
+            xhr.status < 300
+              ? resolve()
+              : reject(new Error(JSON.parse(xhr.responseText || "{}").error || xhr.statusText));
+          xhr.onerror = () => reject(new Error("Upload failed"));
+          xhr.send(file);
+        });
+      }
 
-async function addFiles(fileList) {
-  if (!room()) { alert("Enter a room name first."); return; }
-  uploading++;
-  render();
-  try {
-    for (const f of fileList) await upload(f);
-  } catch (err) {
-    alert(err.message);
-  } finally {
-    uploading--;
-    refresh();
-  }
-}
+      async function addFiles(fileList) {
+        if (!room()) {
+          alert("Enter a room name first.");
+          return;
+        }
+        uploading++;
+        render();
+        try {
+          for (const f of fileList) await upload(f);
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          uploading--;
+          refresh();
+        }
+      }
 
-$("drop").onclick = () => $("picker").click();
-$("picker").onchange = (e) => { addFiles([...e.target.files]); e.target.value = ""; };
-$("drop").ondragover = (e) => { e.preventDefault(); $("drop").classList.add("over"); };
-$("drop").ondragleave = () => $("drop").classList.remove("over");
-$("drop").ondrop = (e) => { e.preventDefault(); $("drop").classList.remove("over"); addFiles([...e.dataTransfer.files]); };
-$("room").oninput = () => refresh();
+      $("drop").onclick = () => $("picker").click();
+      $("picker").onchange = (e) => {
+        addFiles([...e.target.files]);
+        e.target.value = "";
+      };
+      $("drop").ondragover = (e) => {
+        e.preventDefault();
+        $("drop").classList.add("over");
+      };
+      $("drop").ondragleave = () => $("drop").classList.remove("over");
+      $("drop").ondrop = (e) => {
+        e.preventDefault();
+        $("drop").classList.remove("over");
+        addFiles([...e.dataTransfer.files]);
+      };
+      $("room").oninput = () => refresh();
 
-$("start").onclick = async () => {
-  try { await api("POST", "/api/start", { room: room(), preset: $("preset").value, colab: $("colab").checked }); }
-  catch (err) { alert(err.message); }
-  refresh();
-};
-$("exportColab").onclick = async () => {
-  exporting = true;
-  $("exportInfo").textContent = "Zipping…";
-  render();
-  try {
-    const info = await api("POST", "/api/export-colab", { room: room() });
-    alert(`Ready to upload (${fmtBytes(info.size_bytes)}):\n${info.path}\n\nUpload it to Google Drive: MyDrive/colibrimo/runs/${room()}/`);
-  } catch (err) { alert(err.message); }
-  exporting = false;
-  refresh();
-};
-$("trainHere").onclick = async () => {
-  if (!confirm("Train this room on this laptop with " + state.trainer + " instead of Colab?")) return;
-  try { await api("POST", "/api/resume", { room: room(), here: true }); }
-  catch (err) { alert(err.message); }
-  refresh();
-};
+      $("start").onclick = async () => {
+        try {
+          await api("POST", "/api/start", {
+            room: room(),
+            preset: $("preset").value,
+            colab: $("colab").checked,
+          });
+        } catch (err) {
+          alert(err.message);
+        }
+        refresh();
+      };
+      $("exportColab").onclick = async () => {
+        exporting = true;
+        $("exportInfo").textContent = "Zipping…";
+        render();
+        try {
+          const info = await api("POST", "/api/export-colab", { room: room() });
+          alert(
+            `Ready to upload (${fmtBytes(info.size_bytes)}):\n${info.path}\n\nUpload it to Google Drive: MyDrive/colibrimo/runs/${room()}/`,
+          );
+        } catch (err) {
+          alert(err.message);
+        }
+        exporting = false;
+        refresh();
+      };
+      $("trainHere").onclick = async () => {
+        if (!confirm("Train this room on this laptop with " + state.trainer + " instead of Colab?"))
+          return;
+        try {
+          await api("POST", "/api/resume", { room: room(), here: true });
+        } catch (err) {
+          alert(err.message);
+        }
+        refresh();
+      };
 
-/** Upload one file of a Colab result; resolves with the server's answer. */
-function importFile(file) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `/api/import-colab?room=${encodeURIComponent(room())}&file=${encodeURIComponent(file.name)}`);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) $("importProgress").textContent = `Uploading ${file.name}: ${Math.round((100 * e.loaded) / e.total)}%`;
-    };
-    xhr.onload = () => {
-      const data = JSON.parse(xhr.responseText || "{}");
-      xhr.status < 300 ? resolve(data) : reject(new Error(data.error || xhr.statusText));
-    };
-    xhr.onerror = () => reject(new Error("Upload failed"));
-    xhr.send(file);
-  });
-}
-$("importColab").onclick = () => $("importPicker").click();
-$("importPicker").onchange = async (e) => {
-  const files = [...e.target.files];
-  e.target.value = "";
-  if (!files.length) return;
-  importing = true;
-  $("importOk").classList.add("hidden");
-  render();
-  try {
-    let answer = null;
-    for (const f of files) answer = await importFile(f);
-    if (answer.imported) {
-      $("importOk").textContent = "Imported. Checks:\n" + answer.check.join("\n");
-      $("importOk").classList.remove("hidden");
-    } else {
-      alert("Still needed: " + answer.waiting_for.join(", ") + ". Choose the result zip, or all three files.");
-    }
-  } catch (err) { alert(err.message); }
-  $("importProgress").textContent = "";
-  importing = false;
-  refresh();
-};
-$("resume").onclick = async () => {
-  try { await api("POST", "/api/resume", { room: room() }); }
-  catch (err) { alert(err.message); }
-  refresh();
-};
-$("partial").onclick = async () => {
-  if (!confirm("Build a PARTIAL room from the frames COLMAP could place?\n\n" +
-      "The room will have missing parts and holes, and it will be marked as partial. " +
-      "COLMAP's result is reused, so this goes straight to training.\n\n" +
-      "For a complete room, re-film instead (slow turns at the corners).")) return;
-  try { await api("POST", "/api/continue-partial", { room: room() }); }
-  catch (err) { alert(err.message); }
-  refresh();
-};
-$("openViewer").onclick = async () => {
-  try {
-    const { url, viewer_running } = await api("POST", "/api/open-viewer", { room: room() });
-    if (!viewer_running) alert("Files copied. The viewer is not running: start it with npm run dev, then open\n" + url);
-    window.open(url, "_blank");
-  } catch (err) { alert(err.message); }
-};
+      /** Upload one file of a Colab result; resolves with the server's answer. */
+      function importFile(file) {
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open(
+            "PUT",
+            `/api/import-colab?room=${encodeURIComponent(room())}&file=${encodeURIComponent(file.name)}`,
+          );
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable)
+              $("importProgress").textContent =
+                `Uploading ${file.name}: ${Math.round((100 * e.loaded) / e.total)}%`;
+          };
+          xhr.onload = () => {
+            const data = JSON.parse(xhr.responseText || "{}");
+            xhr.status < 300 ? resolve(data) : reject(new Error(data.error || xhr.statusText));
+          };
+          xhr.onerror = () => reject(new Error("Upload failed"));
+          xhr.send(file);
+        });
+      }
+      $("importColab").onclick = () => $("importPicker").click();
+      $("importPicker").onchange = async (e) => {
+        const files = [...e.target.files];
+        e.target.value = "";
+        if (!files.length) return;
+        importing = true;
+        $("importOk").classList.add("hidden");
+        render();
+        try {
+          let answer = null;
+          for (const f of files) answer = await importFile(f);
+          if (answer.imported) {
+            $("importOk").textContent = "Imported. Checks:\n" + answer.check.join("\n");
+            $("importOk").classList.remove("hidden");
+          } else {
+            alert(
+              "Still needed: " +
+                answer.waiting_for.join(", ") +
+                ". Choose the result zip, or all three files.",
+            );
+          }
+        } catch (err) {
+          alert(err.message);
+        }
+        $("importProgress").textContent = "";
+        importing = false;
+        refresh();
+      };
+      $("resume").onclick = async () => {
+        try {
+          await api("POST", "/api/resume", { room: room() });
+        } catch (err) {
+          alert(err.message);
+        }
+        refresh();
+      };
+      $("partial").onclick = async () => {
+        if (
+          !confirm(
+            "Build a PARTIAL room from the frames COLMAP could place?\n\n" +
+              "The room will have missing parts and holes, and it will be marked as partial. " +
+              "COLMAP's result is reused, so this goes straight to training.\n\n" +
+              "For a complete room, re-film instead (slow turns at the corners).",
+          )
+        )
+          return;
+        try {
+          await api("POST", "/api/continue-partial", { room: room() });
+        } catch (err) {
+          alert(err.message);
+        }
+        refresh();
+      };
+      $("openViewer").onclick = async () => {
+        try {
+          const { url, viewer_running } = await api("POST", "/api/open-viewer", { room: room() });
+          if (!viewer_running)
+            alert(
+              "Files copied. The viewer is not running: start it with npm run dev, then open\n" +
+                url,
+            );
+          window.open(url, "_blank");
+        } catch (err) {
+          alert(err.message);
+        }
+      };
 
-refresh();
-setInterval(refresh, 2000);
-</script>
-</body>
+      refresh();
+      setInterval(refresh, 2000);
+    </script>
+  </body>
 </html>
