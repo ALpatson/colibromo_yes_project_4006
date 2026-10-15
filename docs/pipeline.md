@@ -24,13 +24,15 @@ How to film a room (three heights, slow turns, locked exposure, nobody moving):
 
 We have no GPU machine yet (PRD §11 Q1), so the normal workflow is:
 
-1. **Laptop (CPU):** `validate`, `extract_frames`, `poses` with `--until poses`.
-   COLMAP is faster on a laptop (6+ cores) than on Colab (2 cores).
-2. **Google Colab (free T4 GPU):** copy the run folder to Google Drive, open
-   [pipeline/notebooks/colab_run.ipynb](../pipeline/notebooks/colab_run.ipynb), run `train` + `export`.
+1. **Laptop:** `validate`, `extract_frames`, `poses` with `--until poses` (in `cpipe ui`:
+   *Stop after COLMAP (train on Colab)*). COLMAP is faster on a laptop (6+ cores, CUDA COLMAP)
+   than on Colab (2 cores).
+2. **Google Colab (free T4 GPU):** `train` (gsplat) + `export`, see
+   [Training on Google Colab](#training-on-google-colab).
 
-Or run everything on Colab with the notebook (simplest, slower poses). Completed steps are
-skipped automatically, so a run folder can move between machines.
+Or run everything on Colab with the notebook (slower poses). Completed steps are skipped
+automatically, so a run folder can move between machines; `cpipe run --output <run>` without
+`--video` continues a run folder with the videos its manifest records.
 
 **Or everything on the laptop with Brush** (any GPU; see [Training with Brush](#training-with-brush)):
 `cpipe run ... --set train.trainer=brush`.
@@ -301,26 +303,57 @@ to level the room, set the eye height (`middle_*` cameras) and limit the walk ar
 Camera axes follow COLMAP/OpenCV (x right, y down, z forward): `rotation_wxyz` is the
 world-from-camera rotation, `up` = −y and `forward` = +z as unit vectors.
 
-## Google Colab
+## Training on Google Colab
 
-Open [pipeline/notebooks/colab_run.ipynb](../pipeline/notebooks/colab_run.ipynb) in Colab
-(*File > Open notebook > GitHub*, paste the repository URL), choose a **T4 GPU** runtime, edit the
-settings cell, and *Run all*. The notebook:
+The laptop does validate → extract_frames → poses; Colab does train + export with gsplat on a
+T4 (decision D-020).
 
-- installs COLMAP and FFmpeg (Ubuntu packages);
-- compiles **gsplat 1.5.3** and **fused-ssim** once for the current Colab Python/PyTorch and
-  caches the builds on your Drive (`MyDrive/colibrimo/wheels/`): about 25 min the first time,
-  about 2 min afterwards. Colab upgrades (e.g. Python 3.12 to 3.13 on 2026-09-16) trigger one new
-  compile automatically;
-- installs gsplat's training script and requirements, and this pipeline from GitHub;
-- runs `cpipe` on local disk and copies the run folder to `MyDrive/colibrimo/runs/<RUN_NAME>/`.
+**Privacy:** the zip holds the room's frames. Only put our own test rooms on Google Drive until
+Colibrimo approves storing client data there.
 
-To continue a laptop run on Colab: copy the laptop's run folder (e.g. `data/runs/room1`) to
-`MyDrive/colibrimo/runs/room1/` (the `frames_candidates` folder is not needed), set
-`RUN_NAME = "room1"` and run the notebook. Steps up to `poses` are skipped.
+1. **Run up to COLMAP.** In `cpipe ui`, tick *Stop after COLMAP (train on Colab)* and click
+   *Start* (CLI: `cpipe run ... --until poses`). The run stops with status "ready for Colab".
+2. **Zip.** Click *Export for Colab*. The page shows the zip's path and size:
+   `data/colab/<room>_for_colab.zip` (myRoom2: 108 MB, 310 files). It holds only the manifest,
+   `frames.json`, `input/videos.json`, the frames, COLMAP's model and database: no videos, no
+   logs, no candidate frames, no unused COLMAP models.
+3. **Upload** the zip to Google Drive: `MyDrive/colibrimo/runs/<room>/`.
+4. **Open the notebook** in Colab: *File > Open notebook > GitHub*, repository
+   `ALpatson/colibromo_yes_project_4006`, branch `step-1-pipeline`,
+   `pipeline/notebooks/colab_run.ipynb`.
+5. **T4 runtime:** *Runtime > Change runtime type > T4 GPU*.
+6. **Settings cell:** `RUN_NAME = "<room>"`; `PRESET` as on the laptop (`balanced` by default);
+   leave `VIDEOS = []`.
+7. **Run all.** Allow Drive access when asked. The first session compiles **gsplat 1.5.3** and
+   **fused-ssim** for the current Colab Python/PyTorch (**about 25 min**, cached in
+   `MyDrive/colibrimo/wheels/`); later sessions install in about 2 min. Colab upgrades (e.g.
+   Python 3.12 to 3.13 on 2026-09-16) trigger one new compile automatically. The notebook then
+   unzips the run, runs `cpipe run --output <run> --set train.trainer=gsplat` (validate,
+   extract_frames and poses are reused), and prints `cpipe check`: the coordinate check and the
+   camera count. All lines should say OK.
+8. **Download the result:** `MyDrive/colibrimo/runs/<room>/<room>_colab_result.zip` (scene.ply,
+   cameras.json, manifest.json, gsplat's transform, train/export logs). The notebook's last cell
+   can also download it directly. Colab's logs are copied to `logs_colab/` in the same Drive folder.
+9. **Import.** In `cpipe ui`, open the room and click *Import Colab result*. Choose the zip (or
+   `scene.ply`, `cameras.json` and `manifest.json` together). The import is refused, and nothing
+   changes, unless the result was trained from this room's current COLMAP result and passes the
+   checks. Then *Open in viewer* works as usual; the result card says "Trained on Google Colab".
 
-To look at `scene.ply`: drop it on [SuperSplat](https://superspl.at/editor) (in-browser, no
-upload). Our viewer comes in Step 4.
+*Train on this laptop instead* (on the Colab card) continues the run here with Brush.
+
+**What `cpipe check` checks** (also run on import, and by the `train` step itself after gsplat):
+
+- *Coordinate check:* COLMAP's 3D points, moved by the scene transform recorded in the manifest
+  (gsplat's normalisation; identity for Brush), lie right next to splats of `scene.ply`: median
+  distance below 0.015 × scene size (D-013).
+- *Cameras:* `cameras.json` has one camera per frame COLMAP placed, built with the same transform.
+
+**Full run on Colab** (no laptop): put the videos on Drive, set
+`VIDEOS = ["/content/drive/MyDrive/colibrimo/videos/room1.mp4", ...]` and run the notebook; it
+then also installs COLMAP and FFmpeg and keeps the whole run folder on Drive.
+
+To look at `scene.ply` without our viewer: drop it on [SuperSplat](https://superspl.at/editor)
+(in-browser, no upload).
 
 ## Docker (GPU machine)
 
@@ -352,9 +385,11 @@ other things, that a 5 s video fails at `validate` and a static shot fails at `e
 | `test_hdr.py` | HDR detection (HLG/PQ/SDR), the tone-mapping filter chain, a real FFmpeg run on a synthetic HLG clip (skipped without libx264/zscale), missing zscale |
 | `test_brush.py` | Brush command line (v0.3.0 flags), GPU adapter/progress parsing, moving unused COLMAP models (incl. old layout), the coordinate check, PLY/points readers |
 | `test_cameras.py` | `cameras.json`: COLMAP readers, quaternions, identity and gsplat transforms |
+| `test_colab.py`, `test_ui_colab.py` | continuing a run without its videos, gsplat's coordinate check (fake trainer), `cpipe check`, the Colab zip (contents), result zip round trip, refused imports, `cpipe ui` Colab buttons |
 
 Not covered by automated tests (needs the real tools; checked by hand on myRoom2, see
-decisions D-011 to D-015): a full COLMAP run, Brush training, gsplat training.
+decisions D-011 to D-015): a full COLMAP run, Brush training. gsplat training on Colab with the
+current code is not verified yet (D-020).
 
 ## Troubleshooting
 
@@ -372,3 +407,5 @@ decisions D-011 to D-015): a full COLMAP run, Brush training, gsplat training.
 | `gsplat's examples folder is not configured` | Set `GSPLAT_EXAMPLES_DIR` to `<gsplat checkout>/examples`. |
 | `No module named 'datasets.colmap'` or `OverflowError: ... out of bounds for uint64` | Fixed automatically by the `train` step (decisions D-009): gsplat v1.5.3's examples clash with Colab's `datasets` package and its pycolmap fork predates numpy 2. If you see them, the pipeline version is too old: reinstall it. |
 | Colab: compile killed (exit 137) | Out of RAM; keep `MAX_JOBS=2` (set by the notebook). |
+| Import: `not trained from this room's current COLMAP result` | COLMAP ran again on the laptop after the export. Export for Colab again and retrain. |
+| `The gsplat splat is not where the recorded scene transform puts COLMAP's points` | gsplat trained in other coordinates than the transform we recorded: `cameras.json` would not match. Keep the logs (`logs_colab/`) and report it (D-020); don't import that result. |

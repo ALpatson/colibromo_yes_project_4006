@@ -302,3 +302,19 @@ So the camera models were **not** what broke NewRoom: with one shared camera and
 **Verified (2026-10-14, NewRoom-fixed):** without the option the run stops (71 of 300 frames, 24%); continuing reuses COLMAP's result in under a second and records `partial_room` (71/300).
 
 **Consequences:** a partial room has missing parts and holes; it is a preview, not a substitute for re-filming. Only the largest COLMAP model is used (the other pieces stay in `colmap_unused/`).
+
+## D-020 · Train on Google Colab after COLMAP on the laptop · 2026-10-15
+
+**Context:** Brush on the laptop's 4 GB NVIDIA T500 takes about an hour for myRoom2 (58 min, 282,405 splats). The team wants to train with gsplat on a free Colab T4 instead, keeping COLMAP on the laptop (faster there, CUDA build). The old notebook could not continue a laptop run: `cpipe run` always needed the videos (not on Colab), it installed `main`, and the gsplat path's scene transform (which `cameras.json` uses) had only been unit-tested.
+
+**Decision:**
+- `cpipe run --output <run>` without `--video` continues a run folder with the inputs its manifest records (paths kept as recorded, e.g. Windows paths); videos are only read if validate or extract_frames must run again. The manifest records `until`.
+- The `train` step runs the coordinate check (D-013) for gsplat too, after applying the recorded gsplat transform to COLMAP's points, and fails if it does not pass: a wrong transform would make `cameras.json` miss `scene.ply`. `cpipe check --output <run>` repeats it on a finished run and checks `cameras.json` (one camera per placed frame, same transform).
+- Hand-over by zip (`colibrimo_pipeline/colab.py`): `<room>_for_colab.zip` holds only the outputs of validate/extract_frames/poses plus the manifest; the notebook returns `<room>_colab_result.zip` (scene.ply, cameras.json, manifest.json, transform, logs). Files go through Drive (`MyDrive/colibrimo/runs/<room>/`), uploaded and downloaded by hand: no Drive API, no credentials in the tool.
+- Import (`cpipe ui`) is refused, with nothing changed, unless the result's `poses.finished_at` equals the room's (trained from this COLMAP result) and `cpipe check` passes. The manifest records `imported_result` (time, check).
+- `cpipe ui`: "Stop after COLMAP (train on Colab)" (remembered by Resume), "Export for Colab", "Import Colab result", "Train on this laptop instead".
+- The notebook installs the `step-1-pipeline` branch until it is merged.
+
+**Verified (2026-10-15, laptop only):** myRoom2 exported (108 MB, 310 files, 10 s); the unzipped copy continued with `--output` only: validate, extract_frames and poses were reused, train started (stopped there: no gsplat on Windows). `cpipe check` passes on myRoom2 (0.0072) and testnew (0.0109). The gsplat path is covered with a fake trainer (transform applied, wrong transform caught). **Not yet verified:** a real gsplat run on Colab with this code; its `cpipe check` output will be added here.
+
+**Consequences:** frames of a room go to Google Drive: only our own test rooms until Colibrimo approves (privacy note in the notebook and docs). The zip includes COLMAP's database (112 MB for myRoom2, compressed): not needed by gsplat, but it is a recorded output of `poses`, so without it Colab would redo COLMAP.
