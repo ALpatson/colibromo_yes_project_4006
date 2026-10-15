@@ -48,19 +48,32 @@ def check_run(run_dir: Path) -> dict[str, Any]:
     missing = [name for name, path in files.items() if not path.is_file()]
     if missing:
         raise PipelineError(f"{run_dir} has no {', '.join(missing)}.")
-    manifest = json.loads(files["manifest.json"].read_text(encoding="utf-8"))
-    cameras = json.loads(files["cameras.json"].read_text(encoding="utf-8"))
+    return check_files(
+        run_dir,
+        json.loads(files["manifest.json"].read_text(encoding="utf-8")),
+        files["scene.ply"],
+        json.loads(files["cameras.json"].read_text(encoding="utf-8")),
+    )
+
+
+def check_files(
+    run_dir: Path, manifest: dict[str, Any], scene_ply: Path, cameras: dict[str, Any]
+) -> dict[str, Any]:
+    """check_run() for a result not (yet) in the run folder: ``manifest`` and
+    ``cameras`` as loaded from JSON; the COLMAP model is read from ``run_dir``."""
     matrix = (manifest.get("transform") or {}).get("matrix_4x4")
     if matrix is None:
         raise PipelineError("The manifest records no scene transform (export not run).")
     poses = manifest.get("steps", {}).get("poses", {})
-    sparse = run_dir / poses.get("outputs", {}).get("sparse_model", "colmap/sparse/0")
+    sparse = Path(run_dir) / poses.get("outputs", {}).get(
+        "sparse_model", "colmap/sparse/0"
+    )
     if not (sparse / "points3D.bin").is_file():
         raise PipelineError(f"No COLMAP model at {sparse}.")
 
     coords = coordinate_check(
         read_points3d_xyz(sparse / "points3D.bin"),
-        read_vertex_xyz(files["scene.ply"]),
+        read_vertex_xyz(scene_ply),
         np.asarray(matrix),
     )
     placed = poses.get("info", {}).get("num_registered")

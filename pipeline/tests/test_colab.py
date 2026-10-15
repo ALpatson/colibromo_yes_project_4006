@@ -3,6 +3,7 @@ coordinate check, and ``cpipe check`` on the result."""
 
 import json
 import shutil
+import zipfile
 
 import numpy as np
 import pytest
@@ -10,10 +11,10 @@ from test_brush import room_points, trained_splat, write_points3d, write_splat_p
 from test_cameras import POSES, rotation, write_model
 from test_pipeline import Recorder, fake_step
 
-from colibrimo_pipeline import cli
+from colibrimo_pipeline import cli, colab
 from colibrimo_pipeline.check import check_run, describe, transform_points
 from colibrimo_pipeline.config import load_config
-from colibrimo_pipeline.errors import ConfigError, StepError
+from colibrimo_pipeline.errors import ConfigError, PipelineError, StepError
 from colibrimo_pipeline.manifest import Manifest
 from colibrimo_pipeline.pipeline import run_pipeline
 from colibrimo_pipeline.steps import export, train
@@ -144,3 +145,156 @@ def test_gsplat_run_with_the_wrong_transform_stops(tmp_path, monkeypatch):
     ctx = gsplat_run(tmp_path, monkeypatch, np.eye(4))  # recorded != trained-in
     with pytest.raises(StepError, match="not where the recorded scene transform"):
         train.run(ctx)
+
+
+# ---- zips: laptop -> Colab -> laptop -----------------------------------------------
+
+
+def laptop_run_after_poses(run_dir):
+    """A run folder stopped after poses, with the clutter a real one has."""
+    files = {
+        "input/videos.json": "{}",
+        "frames.json": '{"frames": []}',
+        "colmap/images/middle_00000.jpg": "jpg",
+        "colmap/images/middle_00001.jpg": "jpg",
+        "colmap/sparse/0/images.bin": "bin",
+        "colmap/database.db": "db",
+        "colmap/image_lists/middle.txt": "list",
+        "colmap_unused/model_1/images.bin": "old",
+        "frames_candidates/middle_c0001.jpg": "candidate",
+        "logs/pipeline.log": "log" * 1000,
+    }
+    for rel, text in files.items():
+        (run_dir / rel).parent.mkdir(parents=True, exist_ok=True)
+        (run_dir / rel).write_text(text)
+    manifest = Manifest.load_or_create(run_dir)
+    manifest.mark_succeeded(
+        "validate", {"videos_info": run_dir / "input/videos.json"}, {}, 1
+    )
+    manifest.mark_succeeded(
+        "extract_frames",
+        {"images_dir": run_dir / "colmap/images", "frames": run_dir / "frames.json"},
+        {},
+        1,
+    )
+    manifest.mark_succeeded(
+        "poses",
+        {
+            "sparse_model": run_dir / "colmap/sparse/0",
+            "database": run_dir / "colmap/database.db",
+        },
+        {},
+        1,
+    )
+    manifest.save()
+    return manifest
+
+
+def test_export_for_colab_zips_only_what_training_needs(tmp_path):
+    laptop_run_after_poses(tmp_path / "run")
+    info = colab.export_for_colab(tmp_path / "run", tmp_path / "room_for_colab.zip")
+    assert info["num_files"] == 7
+    with zipfile.ZipFile(info["path"]) as z:
+        assert sorted(z.namelist()) == [
+            "colmap/database.db",
+            "colmap/images/middle_00000.jpg",
+            "colmap/images/middle_00001.jpg",
+            "colmap/sparse/0/images.bin",
+            "frames.json",
+            "input/videos.json",
+            "manifest.json",
+        ]
+    assert info["size_bytes"] == (tmp_path / "room_for_colab.zip").stat().st_size
+
+
+def test_export_for_colab_needs_poses(tmp_path):
+    manifest = laptop_run_after_poses(tmp_path)
+    manifest.data["steps"]["poses"]["status"] = "failed"
+    manifest.save()
+    with pytest.raises(PipelineError, match="'poses' is not finished"):
+        colab.export_for_colab(tmp_path, tmp_path / "x.zip")
+
+
+@pytest.fixture
+def trained_on_colab(tmp_path, monkeypatch):
+    """(laptop run folder stopped after poses, the same run finished on 'Colab',
+    the result zip)."""
+    colab_run = tmp_path / "colab"
+    ctx = gsplat_run(colab_run, monkeypatch, GSPLAT_MATRIX)
+    laptop = tmp_path / "laptop"
+    shutil.copytree(colab_run, laptop, ignore=shutil.ignore_patterns("logs"))
+    for step in (train, export):
+        result = step.run(ctx)
+        ctx.manifest.mark_succeeded(step.NAME, result.outputs, result.info, 1)
+    ctx.manifest.set_status("succeeded")
+    ctx.manifest.save()
+    (colab_run / "logs" / "train.log").write_text("trained")
+    packed = colab.pack_result(colab_run, tmp_path / "room_colab_result.zip")
+    return laptop, colab_run, packed
+
+
+def test_result_zip_round_trip_and_import(trained_on_colab, tmp_path):
+    laptop, colab_run, packed = trained_on_colab
+    with zipfile.ZipFile(packed["path"]) as z:
+        assert sorted(z.namelist()) == [
+            "cameras.json",
+            "logs/train.log",
+            "manifest.json",
+            "scene.ply",
+            "train/transform.json",
+        ]
+    staging = tmp_path / "staging"
+    found = colab.extract_result_zip(packed["path"], staging)
+    assert sorted(found) == sorted(
+        ["cameras.json", "manifest.json", "scene.ply", "transform.json", "train.log"]
+    )
+
+    result = colab.import_result(laptop, staging)
+    assert result["ok"] is True
+    assert (laptop / "scene.ply").read_bytes() == (colab_run / "scene.ply").read_bytes()
+    assert (laptop / "train" / "transform.json").is_file()
+    assert (laptop / "logs" / "train.log").read_text() == "trained"
+    data = json.loads((laptop / "manifest.json").read_text())
+    assert data["status"] == "succeeded"
+    assert data["imported_result"]["check"]["ok"] is True
+    assert check_run(laptop)["ok"] is True
+    assert not staging.exists()
+
+
+def test_import_refuses_a_result_from_other_poses(trained_on_colab, tmp_path):
+    laptop, _, packed = trained_on_colab
+    data = json.loads((laptop / "manifest.json").read_text())
+    data["steps"]["poses"]["finished_at"] = "2026-01-01T00:00:00+00:00"  # COLMAP re-run
+    (laptop / "manifest.json").write_text(json.dumps(data))
+    staging = tmp_path / "staging"
+    colab.extract_result_zip(packed["path"], staging)
+    with pytest.raises(PipelineError, match="not trained from this room's current"):
+        colab.import_result(laptop, staging)
+    assert not (laptop / "scene.ply").exists()  # nothing installed
+
+
+def test_import_refuses_a_result_that_fails_the_check(trained_on_colab, tmp_path):
+    laptop, _, packed = trained_on_colab
+    staging = tmp_path / "staging"
+    colab.extract_result_zip(packed["path"], staging)
+    cameras = json.loads((staging / "cameras.json").read_text())
+    cameras["num_cameras"] = 2
+    (staging / "cameras.json").write_text(json.dumps(cameras))
+    with pytest.raises(PipelineError, match="failed the checks"):
+        colab.import_result(laptop, staging)
+    assert not (laptop / "scene.ply").exists()
+
+
+def test_extract_result_zip_takes_only_known_names(tmp_path):
+    path = tmp_path / "r.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("../../evil.txt", "x")
+        z.writestr("myRoom2/../../manifest.json", "{}")
+        z.writestr("notes/readme.md", "x")
+    dest = tmp_path / "dest"
+    assert colab.extract_result_zip(path, dest) == ["manifest.json"]
+    assert sorted(p.name for p in dest.iterdir()) == ["manifest.json"]
+    assert not (tmp_path / "evil.txt").exists()
+    (tmp_path / "bad.zip").write_text("not a zip")
+    with pytest.raises(PipelineError, match="Not a valid zip"):
+        colab.extract_result_zip(tmp_path / "bad.zip", dest)
