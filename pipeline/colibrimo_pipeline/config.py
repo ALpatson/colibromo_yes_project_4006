@@ -150,14 +150,31 @@ class TrainConfig(_Section):
     )
     max_steps: int = Field(30_000, ge=100)
     strategy: Literal["default", "mcmc"] = Field(
-        "default", description="gsplat densification strategy (gsplat only)."
+        "default",
+        description="gsplat densification strategy (gsplat only): 'default' (original "
+        "3DGS growth and pruning) or 'mcmc' (fixed budget of max_splats, default 1M).",
     )
     sh_degree: int = Field(3, ge=0, le=3, description="Spherical harmonics degree.")
     test_every: int = Field(
         8,
-        ge=1,
-        description="gsplat only: every Nth frame is held out for evaluation. "
-        "Brush trains on all frames.",
+        ge=0,
+        description="Every Nth frame (by name) is held out of training and used to "
+        "score the result (PSNR/SSIM/LPIPS, D-021). 0 = train on all frames, no "
+        "score (for a room's final result).",
+    )
+    antialiased: bool = Field(
+        False, description="gsplat only: anti-aliased rasterization (v1.5.3 option)."
+    )
+    bilateral_grid: bool = Field(
+        False,
+        description="gsplat only: per-frame colour/exposure correction during training "
+        "(v1.5.3 use_bilateral_grid). The exported splat has no per-frame part.",
+    )
+    eval_images: int = Field(
+        5,
+        ge=0,
+        description="Side-by-side images (real | rendered) saved for this many fixed "
+        "held-out frames.",
     )
     brush_exe: str | None = Field(
         None,
@@ -167,8 +184,9 @@ class TrainConfig(_Section):
     max_splats: int | None = Field(
         None,
         ge=1000,
-        description="Brush only: upper bound on the number of splats (Brush's "
-        "default is 10,000,000; ~1,000,000 fits a 4 GB GPU).",
+        description="Upper bound on the number of splats. Brush: default 10,000,000 "
+        "(~1,000,000 fits a 4 GB GPU). gsplat: the MCMC budget (strategy.cap_max, "
+        "default 1,000,000); not used by the default strategy.",
     )
     max_resolution: int | None = Field(
         None,

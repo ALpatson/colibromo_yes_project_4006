@@ -392,6 +392,7 @@ def test_ui_overrides():
         "trainer": "brush",
         "max_splats": 500000,
         "max_resolution": 1280,
+        "test_every": 0,  # laptop: all frames (no score possible there)
     }
     assert overrides["poses"] == {"use_gpu": True}
     assert "poses" not in ui_overrides(gpu_colmap=False)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -28,7 +29,8 @@ import numpy as np
 
 from colibrimo_pipeline.check import coordinate_check
 from colibrimo_pipeline.config import TrainConfig
-from colibrimo_pipeline.errors import StepError
+from colibrimo_pipeline.errors import PipelineError, StepError
+from colibrimo_pipeline.evaluate import run_evaluation, test_frame_names
 from colibrimo_pipeline.gsplat_compat import apply_gsplat_fixes
 from colibrimo_pipeline.steps._brush import (
     brush_executable,
@@ -44,7 +46,9 @@ from colibrimo_pipeline.utils.colmap_model import (
     UNUSED_MODELS_DIR,
     find_model_dirs,
     move_unused_models,
+    read_images,
     read_points3d_xyz,
+    write_images_subset,
 )
 from colibrimo_pipeline.utils.ply import read_vertex_count, read_vertex_xyz
 from colibrimo_pipeline.utils.proc import run_capture, run_tool
@@ -83,11 +87,29 @@ def gsplat_examples_dir(cfg: TrainConfig) -> Path:
     return path
 
 
+def _plain_flag(name: str) -> str:
+    return f"--{name}"
+
+
 def build_train_command(
-    python: str, examples_dir: Path, data_dir: Path, result_dir: Path, cfg: TrainConfig
+    python: str,
+    examples_dir: Path,
+    data_dir: Path,
+    result_dir: Path,
+    cfg: TrainConfig,
+    flag=_plain_flag,
 ) -> list[str]:
-    """Command line for gsplat's simple_trainer.py (flags checked against gsplat v1.5.3)."""
+    """Command line for gsplat's simple_trainer.py (flags checked against gsplat v1.5.3).
+
+    ``flag`` spells the optional flags (see trainer_flag_speller)."""
     steps = str(cfg.max_steps)
+    options: list[str] = []
+    if cfg.strategy == "mcmc" and cfg.max_splats:
+        options += [flag("strategy.cap_max"), str(cfg.max_splats)]
+    if cfg.antialiased:
+        options.append(flag("antialiased"))
+    if cfg.bilateral_grid:
+        options.append(flag("use_bilateral_grid"))
     return [
         python,
         str(examples_dir / "simple_trainer.py"),
@@ -113,8 +135,29 @@ def build_train_command(
         "--save_ply",
         "--disable_viewer",
         "--disable_video",
+        *options,
         *cfg.extra_args,
     ]
+
+
+def trainer_flag_speller(python: str, examples_dir: Path, strategy: str):
+    """How this simple_trainer.py spells its flags (tyro: ``--a_b`` or ``--a-b``),
+    read from its ``--help``; a flag it lacks is an error now, not after training."""
+    result = run_capture(
+        [python, str(examples_dir / "simple_trainer.py"), strategy, "--help"],
+        timeout=300,
+    )
+    known = set(re.findall(r"--[\w.-]+", result.stdout + result.stderr))
+
+    def flag(name: str) -> str:
+        for spelling in (f"--{name}", f"--{name.replace('_', '-')}"):
+            if spelling in known:
+                return spelling
+        raise StepError(
+            NAME, f"gsplat's simple_trainer.py ({strategy}) has no option --{name}."
+        )
+
+    return flag
 
 
 def expected_ply(result_dir: Path, max_steps: int) -> Path:
@@ -145,6 +188,8 @@ def compute_transform(
 
 
 def run(ctx: StepContext) -> StepResult:
+    # A result imported from Colab is replaced by this training (D-020).
+    ctx.manifest.data.pop("imported_result", None)
     if ctx.config.train.trainer == "brush":
         return run_brush(ctx)
     return run_gsplat(ctx)
@@ -176,6 +221,11 @@ def run_brush(ctx: StepContext) -> StepResult:
     result_dir = ctx.run_dir / "train"
     shutil.rmtree(result_dir, ignore_errors=True)
     result_dir.mkdir(parents=True)
+    test_frames = _record_test_frames(ctx, sparse_model, result_dir)
+    if test_frames:  # Brush gets a copy of the dataset without the held-out frames
+        data_dir = _dataset_without(
+            sparse_model, set(test_frames), result_dir / "brush_data"
+        )
 
     adapter: dict[str, str] = {}
 
@@ -209,11 +259,12 @@ def run_brush(ctx: StepContext) -> StepResult:
     env = dict(os.environ)
     env.setdefault("RUST_LOG", "info")  # Brush then logs its GPU adapter and progress
     ctx.logger.info(
-        "Training %d steps with Brush (SH degree %d, max resolution %s, max splats %s)...",
+        "Training %d steps with Brush (SH degree %d, max resolution %s, max splats %s), %s...",
         cfg.max_steps,
         cfg.sh_degree,
         cfg.max_resolution or ctx.config.frames.max_long_side,
         cfg.max_splats or "Brush default",
+        _holdout_text(test_frames),
     )
     start = time.monotonic()
     # Brush keeps a GPU kernel-tuning cache (target/autotune) in its working
@@ -281,9 +332,32 @@ def run_brush(ctx: StepContext) -> StepResult:
             "ply_size_bytes": ply.stat().st_size,
             "train_seconds": round(train_seconds, 1),
             "moved_unused_models": moved,
+            "test_every": cfg.test_every,
+            "test_frames": test_frames,
+            # Scoring renders with gsplat (CUDA): run `cpipe evaluate` on Colab.
+            "evaluation": None,
         },
         versions={"brush": brush_version(exe)},
     )
+
+
+def _dataset_without(sparse_model: Path, held_out: set[str], dest: Path) -> Path:
+    """A Brush dataset (images/ + sparse/0) without the held-out frames."""
+    images = sparse_model.parent.parent / "images"
+    (dest / "images").mkdir(parents=True)
+    model = dest / "sparse" / "0"
+    model.mkdir(parents=True)
+    keep = {i["name"] for i in read_images(sparse_model / "images.bin")} - held_out
+    for name in sorted(keep):
+        try:
+            os.link(images / name, dest / "images" / name)
+        except OSError:
+            shutil.copy2(images / name, dest / "images" / name)
+    write_images_subset(sparse_model / "images.bin", model / "images.bin", keep)
+    for other in sparse_model.iterdir():
+        if other.is_file() and other.name != "images.bin":
+            shutil.copy2(other, model / other.name)
+    return dest
 
 
 def run_gsplat(ctx: StepContext) -> StepResult:
@@ -309,13 +383,38 @@ def run_gsplat(ctx: StepContext) -> StepResult:
     data_dir = sparse_model.parent.parent  # colmap/
     result_dir = ctx.run_dir / "train"
     shutil.rmtree(result_dir, ignore_errors=True)
+    result_dir.mkdir(parents=True)
+    test_frames = _record_test_frames(ctx, sparse_model, result_dir)
 
+    needs_options = (
+        cfg.antialiased
+        or cfg.bilateral_grid
+        or (cfg.strategy == "mcmc" and cfg.max_splats)
+    )
+    flag = (
+        trainer_flag_speller(python, examples_dir, cfg.strategy)
+        if needs_options
+        else _plain_flag
+    )
+    command = build_train_command(
+        python, examples_dir, data_dir, result_dir, cfg, flag=flag
+    )
     ctx.logger.info(
-        "Training %d steps with gsplat (%s strategy)...", cfg.max_steps, cfg.strategy
+        "Training %d steps with gsplat (%s strategy%s%s%s), %s...",
+        cfg.max_steps,
+        cfg.strategy,
+        (
+            f", max {cfg.max_splats:,} splats"
+            if cfg.strategy == "mcmc" and cfg.max_splats
+            else ""
+        ),
+        ", anti-aliased" if cfg.antialiased else "",
+        ", per-frame colour correction" if cfg.bilateral_grid else "",
+        _holdout_text(test_frames),
     )
     start = time.monotonic()
     run_tool(
-        build_train_command(python, examples_dir, data_dir, result_dir, cfg),
+        command,
         step=NAME,
         logger=ctx.logger,
         cwd=examples_dir,
@@ -354,7 +453,28 @@ def run_gsplat(ctx: StepContext) -> StepResult:
     transform_path.write_text(json.dumps(transform, indent=2), encoding="utf-8")
 
     num_gaussians = read_vertex_count(ply)
-    ctx.logger.info("Trained %d Gaussians.", num_gaussians)
+    ctx.logger.info("Trained %d Gaussians in %.0f s.", num_gaussians, train_seconds)
+
+    evaluation: dict = {}
+    if test_frames:
+        try:
+            evaluation = run_evaluation(
+                ctx.run_dir,
+                ply,
+                sparse_model,
+                transform["matrix_4x4"],
+                test_frames,
+                python=python,
+                examples_dir=examples_dir,
+                antialiased=cfg.antialiased,
+                eval_images=cfg.eval_images,
+                logger=ctx.logger,
+            )
+        except (
+            PipelineError
+        ) as exc:  # keep the trained splat; say why there is no score
+            ctx.logger.warning("Warning: %s", exc)
+            evaluation = {"error": str(exc)[-500:]}
     return StepResult(
         outputs={"ply": ply, "transform": transform_path},
         info={
@@ -362,12 +482,36 @@ def run_gsplat(ctx: StepContext) -> StepResult:
             "strategy": cfg.strategy,
             "max_steps": cfg.max_steps,
             "sh_degree": cfg.sh_degree,
+            "max_splats": cfg.max_splats if cfg.strategy == "mcmc" else None,
+            "antialiased": cfg.antialiased,
+            "bilateral_grid": cfg.bilateral_grid,
             "seed": TRAINER_SEED,
             "num_gaussians": num_gaussians,
             "ply_size_bytes": ply.stat().st_size,
             "train_seconds": round(train_seconds, 1),
             "gpu": {"name": env_versions.get("gpu")},
             "coordinate_check": check,
+            "test_every": cfg.test_every,
+            "test_frames": test_frames,
+            "evaluation": evaluation or None,
         },
         versions={"gpu_env": env_versions},
     )
+
+
+def _record_test_frames(
+    ctx: StepContext, sparse_model: Path, result_dir: Path
+) -> list[str]:
+    """The held-out frames (train.test_every), saved in train/test_frames.json."""
+    test_frames = test_frame_names(sparse_model, ctx.config.train.test_every)
+    (result_dir / "test_frames.json").write_text(
+        json.dumps({"test_every": ctx.config.train.test_every, "frames": test_frames}),
+        encoding="utf-8",
+    )
+    return test_frames
+
+
+def _holdout_text(test_frames: list[str]) -> str:
+    if not test_frames:
+        return "on all frames (no held-out frames, no score)"
+    return f"keeping {len(test_frames)} frames out of training to score the result"

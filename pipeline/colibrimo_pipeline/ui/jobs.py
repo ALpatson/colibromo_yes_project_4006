@@ -41,7 +41,14 @@ VIEWER_URL = "http://localhost:5173/"
 # Settings for the UI's runs: Brush on the laptop, sized for a 4 GB GPU (the
 # values that worked on the team's NVIDIA T500). `cpipe ui --set ...` overrides.
 UI_OVERRIDES: dict[str, Any] = {
-    "train": {"trainer": "brush", "max_splats": 1_000_000, "max_resolution": 1280}
+    "train": {
+        "trainer": "brush",
+        "max_splats": 1_000_000,
+        "max_resolution": 1280,
+        # All frames: the laptop cannot score a splat (that needs gsplat + CUDA),
+        # so holding frames out would only cost quality (D-021).
+        "test_every": 0,
+    }
 }
 
 _ROOM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")

@@ -9,6 +9,7 @@ Examples::
     cpipe run --video room1.mp4 --output runs/room1 --set poses.matcher=exhaustive
     cpipe run --output runs/room1        # continue a run folder (e.g. on Colab), no videos
     cpipe check --output runs/room1      # scene.ply and cameras.json in the same coordinates?
+    cpipe evaluate --output runs/room1   # PSNR/SSIM/LPIPS on held-out frames (GPU)
     cpipe config --preset fast                                         # show settings
     cpipe ui                                                           # local web page
 """
@@ -102,6 +103,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check.add_argument("--output", required=True, type=Path, help="Run folder.")
 
+    evaluate = sub.add_parser(
+        "evaluate",
+        help="Score a finished run's scene.ply on its held-out frames (PSNR, SSIM, "
+        "LPIPS); needs gsplat + CUDA (e.g. a Brush splat, scored on Colab).",
+    )
+    evaluate.add_argument("--output", required=True, type=Path, help="Run folder.")
+
     config = sub.add_parser("config", help="Print the resolved configuration as YAML.")
     _add_config_arguments(config)
 
@@ -176,6 +184,11 @@ def main(argv: list[str] | None = None) -> int:
             return _ui(args)
         if args.command == "check":
             return _check(args.output)
+        if args.command == "evaluate":
+            from colibrimo_pipeline.evaluate import describe, evaluate_existing_run
+
+            print("Score:", describe(evaluate_existing_run(args.output)))
+            return 0
         config = load_config(args.preset, _overrides(args))
         if args.command == "config":
             print(

@@ -103,6 +103,7 @@ def gsplat_run(tmp_path, monkeypatch, recorded_matrix):
         lambda python: {"cuda_available": True, "gpu": "Tesla T4"},
     )
     monkeypatch.setattr(train, "run_tool", fake_trainer)
+    monkeypatch.setattr(train, "run_evaluation", lambda *a, **k: {"psnr": 0.0})
     monkeypatch.setattr(
         train,
         "compute_transform",

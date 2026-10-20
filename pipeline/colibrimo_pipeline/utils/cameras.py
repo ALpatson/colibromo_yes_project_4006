@@ -50,6 +50,20 @@ def split_similarity(matrix: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]
     return scale, rotation, matrix[:3, 3]
 
 
+def scene_camtoworld(camtoworld: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """A COLMAP camera-to-world 4x4 moved into scene.ply's coordinates.
+
+    Rotation becomes Q R, the centre s Q C + m: the camera sees the moved scene
+    exactly as it saw the original (only distances are scaled by s).
+    """
+    matrix = np.asarray(matrix, dtype=float)
+    _, rotation, _ = split_similarity(matrix)
+    moved = np.eye(4)
+    moved[:3, :3] = rotation @ camtoworld[:3, :3]
+    moved[:3, 3] = matrix[:3, :3] @ camtoworld[:3, 3] + matrix[:3, 3]
+    return moved
+
+
 def _round(values, digits: int = 6) -> list[float]:
     return [round(float(v), digits) for v in values]
 

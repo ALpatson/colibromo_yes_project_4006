@@ -167,10 +167,21 @@ def read_images(path: Path) -> list[dict]:
     then its 2D points (count uint64, each x, y float64 + point3D_id int64),
     which are skipped.
     """
-    data = Path(path).read_bytes()
+    images = []
+    for record in _image_records(Path(path).read_bytes()):
+        images.append(
+            {k: record[k] for k in ("image_id", "qvec", "tvec", "camera_id", "name")}
+        )
+    return images
+
+
+def _image_records(data: bytes):
+    """Each image of an ``images.bin`` with the byte range of its record
+    (``start``/``end``) and of its 2D points (``points_at``, ``num_points2d``)."""
     (count,) = struct.unpack_from("<Q", data, 0)
-    offset, images = 8, []
+    offset = 8
     for _ in range(count):
+        start = offset
         image_id, *pose = struct.unpack_from("<I7d", data, offset)
         offset += 60
         (camera_id,) = struct.unpack_from("<I", data, offset)
@@ -179,17 +190,80 @@ def read_images(path: Path) -> list[dict]:
         name = data[offset:end].decode("utf-8")
         offset = end + 1
         (num_points2d,) = struct.unpack_from("<Q", data, offset)
-        offset += 8 + 24 * num_points2d
-        images.append(
-            {
-                "image_id": image_id,
-                "qvec": pose[:4],
-                "tvec": pose[4:],
-                "camera_id": camera_id,
-                "name": name,
-            }
+        points_at = offset + 8
+        offset = points_at + 24 * num_points2d
+        yield {
+            "image_id": image_id,
+            "qvec": pose[:4],
+            "tvec": pose[4:],
+            "camera_id": camera_id,
+            "name": name,
+            "start": start,
+            "end": offset,
+            "points_at": points_at,
+            "num_points2d": num_points2d,
+        }
+
+
+def write_images_subset(src: Path, dst: Path, keep_names: set[str]) -> int:
+    """Copy ``images.bin`` keeping only the images named in ``keep_names``
+    (records copied byte for byte); returns how many were kept."""
+    data = Path(src).read_bytes()
+    kept = [r for r in _image_records(data) if r["name"] in keep_names]
+    out = struct.pack("<Q", len(kept)) + b"".join(
+        data[r["start"] : r["end"]] for r in kept
+    )
+    Path(dst).write_bytes(out)
+    return len(kept)
+
+
+# Leading parameters in pixels (focal lengths, principal point) per camera model;
+# the rest (distortion) has no unit.
+_PIXEL_PARAMS = {
+    "SIMPLE_PINHOLE": 3,
+    "SIMPLE_RADIAL": 3,
+    "RADIAL": 3,
+    "PINHOLE": 4,
+    "OPENCV": 4,
+}
+
+
+def write_scaled_model(src: Path, dst: Path, scale: float) -> None:
+    """Copy a COLMAP model (``sparse/0``) for images ``scale`` times larger.
+
+    Camera poses and 3D points are unchanged; image sizes, focal lengths,
+    principal points and the 2D feature positions are multiplied by ``scale``
+    (COLMAP's pixel coordinates start at the image corner, so this is exact).
+    """
+    src, dst = Path(src), Path(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    out = struct.pack("<Q", len(cameras := read_cameras(src / "cameras.bin")))
+    ids = {name: i for i, (name, _) in CAMERA_MODELS.items()}
+    for camera_id, cam in cameras.items():
+        if cam["model"] not in _PIXEL_PARAMS:
+            raise ValueError(f"Cannot rescale camera model {cam['model']}.")
+        n = _PIXEL_PARAMS[cam["model"]]
+        params = [p * scale for p in cam["params"][:n]] + cam["params"][n:]
+        out += struct.pack(
+            "<iiQQ",
+            camera_id,
+            ids[cam["model"]],
+            round(cam["width"] * scale),
+            round(cam["height"] * scale),
         )
-    return images
+        out += struct.pack(f"<{len(params)}d", *params)
+    (dst / "cameras.bin").write_bytes(out)
+
+    data = bytearray((src / "images.bin").read_bytes())
+    for record in _image_records(bytes(data)):
+        for i in range(record["num_points2d"]):
+            at = record["points_at"] + 24 * i
+            x, y = struct.unpack_from("<dd", data, at)
+            struct.pack_into("<dd", data, at, x * scale, y * scale)
+    (dst / "images.bin").write_bytes(bytes(data))
+    for other in src.iterdir():  # points3D.bin, frames.bin, rigs.bin, ...
+        if other.is_file() and other.name not in ("cameras.bin", "images.bin"):
+            (dst / other.name).write_bytes(other.read_bytes())
 
 
 def qvec_to_rotation(qvec) -> np.ndarray:

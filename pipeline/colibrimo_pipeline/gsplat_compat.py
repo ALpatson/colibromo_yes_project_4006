@@ -5,6 +5,10 @@ current environments (e.g. Google Colab with Python 3.13 + numpy 2) two things
 break. Both fixes are small, idempotent and logged; remove them when moving to
 a gsplat release that no longer needs them (gsplat's main branch already uses
 the official ``pycolmap`` and numpy 2). See docs/decisions.md D-009.
+
+A third change lets ``test_every 0`` train on every frame (D-021): v1.5.3 always
+holds out frames 0, N, 2N, ... (``indices % test_every``), even frame 0 for a
+huge N.
 """
 
 from __future__ import annotations
@@ -74,11 +78,49 @@ def patch_pycolmap_for_numpy2(package_dir: Path) -> bool:
     return True
 
 
+# Exact lines in gsplat v1.5.3's examples/datasets/colmap.py (Dataset.__init__).
+SPLIT_OLD_LINES = (
+    "self.indices = indices[indices % self.parser.test_every != 0]",
+    "self.indices = indices[indices % self.parser.test_every == 0]",
+)
+SPLIT_NEW_LINES = (
+    "self.indices = indices[indices % self.parser.test_every != 0]"
+    " if self.parser.test_every > 0 else indices  # colibrimo_pipeline: 0 = all frames",
+    "self.indices = indices[indices % self.parser.test_every == 0]"
+    " if self.parser.test_every > 0 else indices[:0]  # colibrimo_pipeline",
+)
+
+
+def allow_training_on_all_frames(examples_dir: Path) -> bool:
+    """Make ``test_every 0`` mean "no held-out frames" in gsplat's Dataset.
+
+    Returns True if the file was changed, False if already patched; raises if
+    the expected lines are missing (another gsplat version)."""
+    colmap_py = examples_dir / "datasets" / "colmap.py"
+    text = colmap_py.read_text(encoding="utf-8")
+    if SPLIT_NEW_LINES[0] in text:
+        return False
+    if not all(line in text for line in SPLIT_OLD_LINES):
+        raise RuntimeError(
+            f"{colmap_py} is not gsplat v1.5.3's: cannot set up training on all frames."
+        )
+    for old, new in zip(SPLIT_OLD_LINES, SPLIT_NEW_LINES, strict=True):
+        text = text.replace(old, new)
+    colmap_py.write_text(text, encoding="utf-8")
+    return True
+
+
 def apply_gsplat_fixes(examples_dir: Path, python: str) -> list[str]:
     """Apply all workarounds; return a description of each change made."""
     changes = []
     if make_datasets_importable(examples_dir):
         changes.append(f"added {examples_dir / 'datasets' / '__init__.py'}")
+    if (examples_dir / "datasets" / "colmap.py").is_file() and (
+        allow_training_on_all_frames(examples_dir)
+    ):
+        changes.append(
+            f"patched {examples_dir / 'datasets' / 'colmap.py'}: test_every 0"
+        )
     pycolmap_dir = find_pycolmap_dir(python)
     if pycolmap_dir and patch_pycolmap_for_numpy2(pycolmap_dir):
         changes.append(f"patched {pycolmap_dir / 'scene_manager.py'} for numpy 2")

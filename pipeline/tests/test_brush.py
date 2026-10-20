@@ -187,7 +187,11 @@ def brush_run(tmp_path, monkeypatch):
     monkeypatch.setattr(train, "brush_executable", lambda cfg: "brush_app.exe")
     monkeypatch.setattr(train, "run_tool", fake_run_tool)
     ctx = StepContext(
-        tmp_path, [], brush_config(), manifest, setup_logging(tmp_path / "logs")
+        tmp_path,
+        [],
+        brush_config(test_every=0),  # as cpipe ui runs it; the fake model has no images
+        manifest,
+        setup_logging(tmp_path / "logs"),
     )
     return ctx, train, started
 
