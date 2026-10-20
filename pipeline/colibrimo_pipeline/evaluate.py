@@ -22,7 +22,7 @@ from typing import Any
 
 from colibrimo_pipeline.errors import PipelineError
 from colibrimo_pipeline.manifest import MANIFEST_NAME, Manifest
-from colibrimo_pipeline.utils.colmap_model import read_images
+from colibrimo_pipeline.utils.colmap_model import read_cameras, read_images
 from colibrimo_pipeline.utils.proc import run_capture
 
 EVAL_HELPER = Path(__file__).parent / "steps" / "_evaluate_helper.py"
@@ -49,6 +49,25 @@ def frames_to_save(test_frames: list[str], count: int) -> list[str]:
     return [test_frames[round(i * step)] for i in range(count)]
 
 
+def pinhole_cameras(sparse_model: Path) -> dict[str, dict[str, Any]]:
+    """Each COLMAP camera as a plain pinhole K (distortion ignored) and its frame
+    size: what a web viewer renders with (see the viewer's snapshot mode)."""
+    cameras = {}
+    for camera_id, cam in read_cameras(Path(sparse_model) / "cameras.bin").items():
+        p = cam["params"]
+        fx, fy, cx, cy = (
+            (p[0], p[0], p[1], p[2])
+            if cam["model"].startswith(("SIMPLE_", "RADIAL"))
+            else p[:4]
+        )
+        cameras[str(camera_id)] = {
+            "K": [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+            "width": int(cam["width"]),
+            "height": int(cam["height"]),
+        }
+    return cameras
+
+
 def run_evaluation(
     run_dir: Path,
     ply: Path,
@@ -67,7 +86,7 @@ def run_evaluation(
     run_dir = Path(run_dir).resolve()
     out_dir = run_dir / EVAL_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    for old in out_dir.glob("*_real_vs_render.png"):
+    for old in out_dir.glob("*.png"):
         old.unlink()
     job = {
         "examples_dir": str(examples_dir),
@@ -78,6 +97,7 @@ def run_evaluation(
         "save_frames": frames_to_save(test_frames, eval_images),
         "out_dir": str(out_dir),
         "antialiased": antialiased,
+        "pinhole": pinhole_cameras(sparse_model),
     }
     job_file = out_dir / "job.json"
     job_file.write_text(json.dumps(job, indent=1), encoding="utf-8")

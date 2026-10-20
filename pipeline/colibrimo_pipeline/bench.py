@@ -70,6 +70,12 @@ VARIANTS: dict[str, dict[str, Any]] = {
         "compared_to": "baseline",
         "set": {"antialiased": True},
     },
+    "brush-ref": {
+        "about": "Brush on the laptop (NVIDIA T500), 1280 px, max 1M splats (reference)",
+        "compared_to": None,
+        "set": {},
+        "trained_elsewhere": True,
+    },
 }
 
 
@@ -186,6 +192,62 @@ def prepare_fullres(run_dir: Path, out_dir: Path, min_psnr: float = 30.0) -> dic
         "frames": len(frames),
         "min_psnr_vs_original": round(worst, 2),
     }
+
+
+def compare_viewer(
+    viewer_png: Path, reference_png: Path, real_frame: Path | None = None
+) -> dict[str, Any]:
+    """Viewer check (D-021): the web viewer's snapshot of a frame's exact view vs
+    gsplat's render of the same splat and view (``*_render_pinhole.png``).
+
+    PSNR between the two renderers measures what the viewer changes; against the
+    real frame for context. ``black_fraction`` counts near-black pixels (holes
+    where no splat covers the image: the viewer's background is black).
+    """
+
+    def load(path: Path) -> np.ndarray:
+        return np.asarray(Image.open(path).convert("RGB"))
+
+    viewer, reference = load(viewer_png), load(reference_png)
+    if viewer.shape != reference.shape:
+        raise PipelineError(
+            f"Different sizes: viewer {viewer.shape[1]}x{viewer.shape[0]}, "
+            f"reference {reference.shape[1]}x{reference.shape[0]}."
+        )
+
+    def black(img: np.ndarray) -> float:
+        return round(float((img.max(axis=2) < 8).mean()), 4)
+
+    result = {
+        "psnr_viewer_vs_gsplat": round(_psnr(viewer, reference), 2),
+        "mean_abs_diff": round(float(np.abs(viewer.astype(int) - reference).mean()), 2),
+        "brightness_viewer": round(float(viewer.mean()), 1),
+        "brightness_gsplat": round(float(reference.mean()), 1),
+        "black_fraction_viewer": black(viewer),
+        "black_fraction_gsplat": black(reference),
+    }
+    if real_frame is not None:
+        real = load(real_frame)
+        if real.shape == viewer.shape:
+            result["psnr_viewer_vs_real"] = round(_psnr(viewer, real), 2)
+            result["psnr_gsplat_vs_real"] = round(_psnr(reference, real), 2)
+    return result
+
+
+def pack_for_scoring(run_dir: Path, zip_path: Path) -> dict[str, Any]:
+    """Zip a run trained elsewhere (e.g. Brush on the laptop) so Colab can score it
+    with ``cpipe evaluate``: what training needed, plus scene.ply and cameras.json."""
+    from colibrimo_pipeline.colab import _write_zip, files_for_colab
+
+    run_dir = Path(run_dir)
+    if not (run_dir / "scene.ply").is_file():
+        raise PipelineError(f"{run_dir} has no scene.ply: finish the run first.")
+    extra = [
+        (run_dir / n, n)
+        for n in ("scene.ply", "cameras.json")
+        if (run_dir / n).is_file()
+    ]
+    return _write_zip(zip_path, files_for_colab(run_dir) + extra)
 
 
 def collect_results(runs: dict[str, Path]) -> list[dict[str, Any]]:

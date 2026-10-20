@@ -105,6 +105,25 @@ def main() -> None:
             out = f"{job['out_dir']}/{name.rsplit('.', 1)[0]}_real_vs_render.png"
             imageio.imwrite(out, (canvas * 255).round().astype(np.uint8))
             saved.append(out)
+            # Reference for the viewer check: the plain COLMAP camera (no
+            # undistortion, full frame), which a web viewer can reproduce exactly.
+            pin = job["pinhole"][str(int(parser.camera_ids[index[name]]))]
+            with torch.no_grad():
+                plain, _, _ = rasterization(
+                    **splat,
+                    viewmats=viewmat,
+                    Ks=torch.tensor(pin["K"], dtype=torch.float32, device=device)[None],
+                    width=pin["width"],
+                    height=pin["height"],
+                    sh_degree=raw["sh_degree"],
+                    near_plane=0.01,
+                    far_plane=1e10,
+                    rasterize_mode=mode,
+                )
+            plain = torch.clamp(plain, 0.0, 1.0)[0].cpu().numpy()
+            out = f"{job['out_dir']}/{name.rsplit('.', 1)[0]}_render_pinhole.png"
+            imageio.imwrite(out, (plain * 255).round().astype(np.uint8))
+            saved.append(out)
 
     mean = lambda key: float(np.mean([f[key] for f in per_frame]))  # noqa: E731
     print(

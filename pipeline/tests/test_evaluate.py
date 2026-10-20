@@ -17,6 +17,7 @@ from colibrimo_pipeline.errors import PipelineError, StepError
 from colibrimo_pipeline.evaluate import (
     evaluate_existing_run,
     frames_to_save,
+    pinhole_cameras,
 )
 from colibrimo_pipeline.evaluate import (  # renamed: pytest collects test_* names
     test_frame_names as held_out_frames,
@@ -313,6 +314,17 @@ def test_brush_trains_without_the_held_out_frames(tmp_path, monkeypatch):
     assert len(seen["model"]) == 21
 
 
+def test_pinhole_cameras_for_the_viewer_check(tmp_path):
+    write_model(tmp_path / "0", POSES)  # SIMPLE_RADIAL f=785.3, cx=800, cy=450
+    assert pinhole_cameras(tmp_path / "0") == {
+        "1": {
+            "K": [[785.3, 0.0, 800.0], [0.0, 785.3, 450.0], [0.0, 0.0, 1.0]],
+            "width": 1600,
+            "height": 900,
+        }
+    }
+
+
 def test_evaluate_needs_held_out_frames(tmp_path):
     Manifest.load_or_create(tmp_path).save()
     with pytest.raises(PipelineError, match="kept no frames out of training"):
@@ -343,6 +355,28 @@ def test_variants_change_one_thing_and_are_valid_settings():
     assert bench.set_args("antialiased") == [
         "--set", "train.trainer=gsplat", "--set", "train.antialiased=true",
     ]  # fmt: skip
+
+
+def test_compare_viewer(tmp_path):
+    from PIL import Image
+
+    rng = np.random.default_rng(0)
+    real = rng.integers(40, 220, size=(90, 160, 3), dtype=np.uint8)
+    reference = np.clip(real.astype(int) + 3, 0, 255).astype(np.uint8)
+    viewer = reference.copy()
+    viewer[:9] = 0  # a black band: 10% of the image not covered
+    for name, img in (("real", real), ("ref", reference), ("viewer", viewer)):
+        Image.fromarray(img).save(tmp_path / f"{name}.png")
+    result = bench.compare_viewer(
+        tmp_path / "viewer.png", tmp_path / "ref.png", tmp_path / "real.png"
+    )
+    assert result["black_fraction_viewer"] == 0.1
+    assert result["black_fraction_gsplat"] == 0.0
+    assert result["psnr_gsplat_vs_real"] == pytest.approx(38.59, abs=0.01)
+    assert result["psnr_viewer_vs_gsplat"] < 20
+    Image.fromarray(viewer[:45]).save(tmp_path / "small.png")
+    with pytest.raises(PipelineError, match="Different sizes"):
+        bench.compare_viewer(tmp_path / "small.png", tmp_path / "ref.png")
 
 
 def test_results_table(tmp_path):

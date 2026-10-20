@@ -2,6 +2,14 @@
 
 One entry per PRD step (newest first). Dates are YYYY-MM-DD.
 
+## 2026-10-20 · Step 2 (start): measured training quality
+
+- Every gsplat run scores its exported splat on held-out frames (PSNR, SSIM, LPIPS) and saves side-by-side images of 5 fixed frames (D-021); `cpipe evaluate` scores a splat trained elsewhere (e.g. Brush). Brush holds out the same frames.
+- `train.test_every: 0` trains on all frames (final result); gsplat v1.5.3 needed a small patch for it.
+- New training options: `train.strategy: mcmc` (+ `train.max_splats` budget), `train.antialiased`, `train.bilateral_grid`.
+- Benchmark tooling: `bench.py` (variants, full-resolution copy with the same poses, results table, viewer comparison) and `pipeline/notebooks/colab_benchmark.ipynb` (resumable across Colab sessions). `docs/benchmarks.md`.
+- Fix: retraining on the laptop no longer shows "Trained on Google Colab".
+
 ## 2026-10-15 · Step 1: train on Google Colab after COLMAP on the laptop
 
 - `cpipe run --output <run>` without `--video` continues a run folder with the videos its manifest records (D-020).
