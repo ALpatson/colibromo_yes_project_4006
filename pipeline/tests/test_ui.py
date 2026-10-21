@@ -415,6 +415,17 @@ def test_copy_to_viewer(tmp_path):
     assert (viewer / "public" / "runs" / "kitchen" / "cameras.json").is_file()
 
 
+def test_default_viewer_is_the_repositorys(tmp_path, monkeypatch):
+    from colibrimo_pipeline.ui import jobs
+
+    monkeypatch.delenv("CPIPE_VIEWER_DIR", raising=False)
+    assert jobs.REPO_VIEWER_DIR.name == "viewer"
+    assert (jobs.REPO_VIEWER_DIR.parent / "pipeline").is_dir()  # repo root
+    assert jobs.default_viewer_dir() == jobs.REPO_VIEWER_DIR
+    monkeypatch.setenv("CPIPE_VIEWER_DIR", str(tmp_path))
+    assert jobs.default_viewer_dir() == tmp_path
+
+
 def test_copy_to_viewer_needs_results_and_viewer(tmp_path):
     with pytest.raises(UserError, match="no scene.ply"):
         copy_to_viewer(tmp_path, tmp_path, "kitchen")

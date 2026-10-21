@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>Room Tour</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="loading" class="overlay">
+      <div class="loading-box">
+        <div class="loading-title">Loading room…</div>
+        <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+        <div class="loading-detail" id="loading-detail">Starting</div>
+      </div>
+    </div>
+
+    <div id="hud" class="hud hidden"></div>
+    <div id="hint" class="hint hidden"></div>
+    <div id="crosshair" class="crosshair hidden"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -333,3 +333,11 @@ So the camera models were **not** what broke NewRoom: with one shared camera and
 **Verified (2026-10-20, laptop):** full-resolution copy of myRoom2: 300 frames re-extracted at 1920x1080, worst frame 44.4 dB against the original downscaled (same frames), poses identical, cameras scaled by 1.2. Brush on 262 frames (38 held out) started on the NVIDIA T500. Notebook variant command run up to training (frames and COLMAP reused). Pending: the Colab benchmark itself.
 
 **Consequences:** default runs train on 262 of 300 frames for myRoom2 until the settings are chosen; a final result should use `test_every 0`. Defaults are unchanged until the benchmark is reviewed.
+
+## D-022 · The viewer prototype moves into the repository's `viewer/` · 2026-10-21
+
+**Context:** the web viewer (first-person walk, tour hotspots, automatic levelling from the camera poses, snapshot mode) was built as a personal prototype in a separate folder outside git, so the team could not run it. The repository's `viewer/` was the Step 0 placeholder for Step 4.
+
+**Decision:** the prototype becomes `viewer/` as the starting point for Step 4: source, scripts, configs and README only. Room data stays out of git (`viewer/.gitignore`: `public/runs/`, `public/splats/`, `public/colmap/`): splats show private interiors and weigh 60-700 MB; `cpipe ui` → *Open in viewer* copies a run into `public/runs/<room>/` locally. The default `public/config.json` names no room. `npm test` (type check + vitest 5.0.3 unit tests) runs in CI's viewer job; the repo's ESLint/Prettier hooks apply. `cpipe ui` now finds `viewer/` by default (then `~/3DViewing`, then `CPIPE_VIEWER_DIR` overrides both).
+
+**Consequences:** Step 4 starts from working code instead of the placeholder; the README's planned `?src=<url>` loading and `postMessage` embedding for the mobile app are still to do.

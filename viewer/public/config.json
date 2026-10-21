@@ -1,0 +1,15 @@
+{
+  "splats": {
+    "before": "splats/scene.ply"
+  },
+  "cameras": "colmap/cameras.json",
+  "flip": false,
+  "player": {
+    "eyeGroup": "middle",
+    "eyeOffset": 0,
+    "speed": 0.3,
+    "runFactor": 2.5,
+    "wallDistance": 0.15,
+    "walkMargin": null
+  }
+}

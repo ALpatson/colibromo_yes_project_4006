@@ -86,7 +86,7 @@ Side-by-side images show a private interior, so they stay **outside the reposito
 
 ### Viewer check
 
-Question: does the web viewer (`3DViewing`, three.js + Spark 2.3.1) show less than the splat
+Question: does the web viewer (`viewer/`, three.js + Spark 2.3.1) show less than the splat
 contains? Method: the viewer's snapshot mode renders a held-out frame's exact view (pose and
 field of view from `cameras.json`, 1600x900, one canvas pixel per image pixel) and downloads it
 with an info file (GPU, drawing size, SH degree, Spark settings). `bench.compare_viewer`

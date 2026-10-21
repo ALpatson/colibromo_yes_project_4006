@@ -1,0 +1,7 @@
+node_modules/
+dist/
+# Room data: splats and camera poses show private interiors and are large.
+# Copy them in locally (cpipe ui "Open in viewer" does it); never commit them.
+public/runs/
+public/splats/
+public/colmap/

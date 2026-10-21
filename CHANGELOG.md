@@ -2,6 +2,12 @@
 
 One entry per PRD step (newest first). Dates are YYYY-MM-DD.
 
+## 2026-10-21 · Step 4 (start): viewer prototype in the repository
+
+- `viewer/`: the first-person room viewer prototype (Vite + TypeScript + three.js + Spark): automatic levelling, eye height and walk area from the camera poses, walk/tour modes with hotspots, debug panel, snapshot mode for the quality check (D-022). Room data stays out of git.
+- `npm test` in `viewer/` (type check + vitest), run by CI.
+- `cpipe ui` → *Open in viewer* uses the repository's `viewer/` by default.
+
 ## 2026-10-20 · Step 2 (start): measured training quality
 
 - Every gsplat run scores its exported splat on held-out frames (PSNR, SSIM, LPIPS) and saves side-by-side images of 5 fixed frames (D-021); `cpipe evaluate` scores a splat trained elsewhere (e.g. Brush). Brush holds out the same frames.

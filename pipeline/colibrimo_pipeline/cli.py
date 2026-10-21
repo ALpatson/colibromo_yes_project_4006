@@ -128,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--viewer",
         type=Path,
         help="Viewer project folder (with public/). Default: CPIPE_VIEWER_DIR, "
-        "else ~/3DViewing if it exists.",
+        "else the repository's viewer/, else ~/3DViewing if it exists.",
     )
     ui.add_argument(
         "--set",

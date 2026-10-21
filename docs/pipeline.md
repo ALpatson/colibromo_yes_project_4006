@@ -206,7 +206,7 @@ with `npm run dev` first).
 |---|---|---|
 | `--port` | 8765 | page address `http://127.0.0.1:<port>/` |
 | `--data` | `./data` | where `uploads/` and `runs/` go |
-| `--viewer` | `CPIPE_VIEWER_DIR`, else `~/3DViewing` | viewer project folder (with `public/`) |
+| `--viewer` | `CPIPE_VIEWER_DIR`, else the repository's `viewer/`, else `~/3DViewing` | viewer project folder (with `public/`) |
 | `--set KEY=VALUE` | Brush, `train.max_splats=1000000`, `train.max_resolution=1280` | any run setting; COLMAP runs on the GPU automatically if it is a CUDA build |
 | `--no-browser` | | don't open the page |
 

@@ -563,13 +563,20 @@ def ui_overrides(
 # ---- viewer --------------------------------------------------------------------------
 
 
+# The repository's viewer/ (when the pipeline runs from a clone of the repo).
+REPO_VIEWER_DIR = Path(__file__).resolve().parents[3] / "viewer"
+
+
 def default_viewer_dir() -> Path | None:
-    """CPIPE_VIEWER_DIR, else ~/3DViewing if it exists."""
+    """CPIPE_VIEWER_DIR, else the repository's viewer/, else ~/3DViewing (the
+    prototype's old place) if it exists."""
     configured = os.environ.get("CPIPE_VIEWER_DIR")
     if configured:
         return Path(configured)
-    guess = Path.home() / "3DViewing"
-    return guess if guess.is_dir() else None
+    for guess in (REPO_VIEWER_DIR, Path.home() / "3DViewing"):
+        if (guess / "package.json").is_file():
+            return guess
+    return None
 
 
 def copy_to_viewer(run_dir: Path, viewer_dir: Path, room: str) -> str:
