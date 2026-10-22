@@ -78,36 +78,50 @@ without view-dependent colour (SH degree 0), so the viewer would lose that.
 
 ### Results (myRoom2, Colab T4, 30,000 steps, 2026-10-21)
 
-Table from `bench.results_markdown`; per-variant files in `data/bench/myRoom2_results/` (team
-laptop, outside git). 38 held-out frames each.
+Scored on the 38 held-out frames (1600x900, except fullres: 1920x1080, so its numbers are not
+directly comparable). One run per variant (seed 42), so differences of a few tenths of a dB are
+within run-to-run noise.
 
-| Variant | Change | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Splats | Size (MB) | Training (min) | GPU mem (GB) |
-|---|---|---|---|---|---|---|---|---|
-| baseline | gsplat default strategy, 1600x900 frames (the Colab run of 15 Oct) | 29.73 | 0.9530 | 0.1275 | 714,621 | 168.7 | 29.1 | – |
-| mcmc-1M | MCMC strategy (its default budget: 1M splats) | 29.39 | 0.9512 | 0.1420 | 1,000,000 | 236.0 | 57.9 | – |
-| fullres | 1920x1080 frames (video resolution), same poses | 29.38 | 0.9514 | 0.1599 | 679,700 | 160.4 | 34.6 | – |
-| bilagrid | per-frame colour/exposure correction (use_bilateral_grid) | 25.49 | 0.9461 | 0.1404 | 691,865 | 163.3 | 54.9 | – |
-| antialiased | anti-aliased rasterization | 29.54 | 0.9521 | 0.1284 | 726,446 | 171.4 | 28.8 | – |
+| Variant | Change | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Splats | Size (MB) | Training (min) |
+|---|---|---|---|---|---|---|---|
+| baseline | gsplat default strategy, 1600x900 frames | **29.73** | **0.9530** | **0.1275** | 714,621 | 168.7 | 29.1 |
+| antialiased | anti-aliased rasterization | 29.54 | 0.9521 | 0.1284 | 726,446 | 171.4 | 28.8 |
+| mcmc-1M | MCMC strategy (1M splats) | 29.39 | 0.9512 | 0.1420 | 1,000,000 | 236.0 | 57.9 |
+| fullres | 1920x1080 frames, same poses | 29.38 | 0.9514 | 0.1599 | 679,700 | 160.4 | 34.6 |
+| bilagrid | per-frame colour/exposure correction | 25.49 | 0.9461 | 0.1404 | 691,865 | 163.3 | 54.9 |
+| mcmc-2M | MCMC, 2M splats | – | – | – | – | – | CUDA out of memory on the T4 (15 GB) |
+| mcmc-3M, brush-ref | | not run | | | | | Colab GPU limit reached |
 
-Not run: `mcmc-2M` (CUDA out of memory on the T4's 15 GB), `mcmc-3M`, `brush-ref`.
-GPU memory was not recorded yet for these runs (added in D-023).
+All coordinate checks passed (0.0093-0.0112). bilagrid's low PSNR is expected: the per-frame
+correction is not part of the exported splat, so exposure differences of the held-out frames
+count against it.
 
-**Reading:**
-- **The baseline (default settings) is the best and among the fastest.** No variant is worth its
-  extra time on this room; PSNR 29.7 dB is well above the 25 dB target.
-- `fullres` is scored on 1920x1080 frames, the others on 1600x900, so its numbers are not
-  directly comparable (larger images are harder to match pixel for pixel).
-- `bilagrid` learns a colour correction per *training* frame; held-out frames are rendered without
-  one, which lowers PSNR by construction. It may still look better; judge it on the images.
+**Findings:**
+- No variant beats the baseline. Anti-aliasing ties it; MCMC (1M), full resolution and per-frame
+  colour correction score slightly worse, and MCMC takes twice as long for a 40% larger file.
+- More than ~1M splats does not fit a free T4 at 1600x900 with these settings.
+- At the filmed viewpoints the baseline is good (29.7 dB, above the 25 dB target): in the
+  side-by-side images the render is often sharper than the motion-blurred frame; objects very
+  close to the camera (cupboard edges in "up" frames) smear.
+- So the gaps and blob-like splats seen in the viewer are not explained by these training
+  settings. Held-out frames lie on the filming paths, so the scores cannot see views away from
+  them. Next suspects: the viewer (Spark's blur default, see below) and walking to positions
+  the camera never was.
+
+**Recommendation (defaults unchanged until agreed):** keep gsplat's default settings at
+1600x900; train a room's final version on all frames (`train.test_every 0`). No
+"quality-colab" preset: nothing tested is better.
+
+GPU memory was not recorded for these runs (added in D-023).
+
+Side-by-side images show a private interior, so they stay **outside the repository**, in
+`C:\Users\JOSEPHINE\3DTests\benchmarks\myRoom2\results\<variant>\eval\` (team laptop).
 
 ### Next: quality against training time (Room4, D-023)
 
 Variant `steps-curve`: baseline settings, scored at 7k, 15k and 30k steps in one run, plus
 `brush-ref` (Brush on the team laptop's AMD Radeon 760M, 1280 px, max 1M splats, 38 frames held
 out). *Pending: the Colab run.*
-
-Side-by-side images show a private interior, so they stay **outside the repository**, in
-`C:\Users\JOSEPHINE\3DTests\benchmarks\myRoom2\<variant>\` (team laptop).
 
 ### Viewer check
 
