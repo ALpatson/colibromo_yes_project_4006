@@ -70,6 +70,12 @@ VARIANTS: dict[str, dict[str, Any]] = {
         "compared_to": "baseline",
         "set": {"antialiased": True},
     },
+    "steps-curve": {
+        "about": "baseline settings, also scored at 7k and 15k steps (quality vs time, D-023)",
+        "compared_to": "baseline",
+        # A string, not a list: it goes on the command line as --set train.x=[...].
+        "set": {"checkpoint_steps": "[7000,15000]"},
+    },
     "brush-ref": {
         "about": "Brush on the laptop (NVIDIA T500), 1280 px, max 1M splats (reference)",
         "compared_to": None,
@@ -250,8 +256,34 @@ def pack_for_scoring(run_dir: Path, zip_path: Path) -> dict[str, Any]:
     return _write_zip(zip_path, files_for_colab(run_dir) + extra)
 
 
+def _result_row(name: str, about: str, info: dict[str, Any]) -> dict[str, Any]:
+    """Table row from a train step's info (or one of its checkpoints)."""
+    ev = info.get("evaluation") or {}
+    return {
+        "variant": name,
+        "about": about,
+        "psnr": ev.get("psnr"),
+        "ssim": ev.get("ssim"),
+        "lpips": ev.get("lpips"),
+        "splats": info.get("num_gaussians"),
+        "size_mb": (
+            round(info["ply_size_bytes"] / 1e6, 1)
+            if info.get("ply_size_bytes")
+            else None
+        ),
+        "train_min": (
+            round(info["train_seconds"] / 60, 1) if info.get("train_seconds") else None
+        ),
+        "gpu_mem_gb": info.get("gpu_peak_mem_gb"),
+        "test_frames": ev.get("num_test_frames"),
+    }
+
+
 def collect_results(runs: dict[str, Path]) -> list[dict[str, Any]]:
-    """One row per variant run folder: scores, splats, size, training time."""
+    """One row per variant run folder: scores, splats, size, training time.
+
+    A run trained with ``train.checkpoint_steps`` (D-023) gets one row per
+    checkpoint (``steps-curve @ 7k``) before its final row (``@ 30k``)."""
     rows = []
     for name, run_dir in runs.items():
         path = Path(run_dir) / MANIFEST_NAME
@@ -259,30 +291,20 @@ def collect_results(runs: dict[str, Path]) -> list[dict[str, Any]]:
             continue
         data = json.loads(path.read_text(encoding="utf-8"))
         info = data.get("steps", {}).get("train", {}).get("info", {})
-        ev = info.get("evaluation") or {}
-        rows.append(
-            {
-                "variant": name,
-                "about": VARIANTS.get(name, {}).get("about", ""),
-                "psnr": ev.get("psnr"),
-                "ssim": ev.get("ssim"),
-                "lpips": ev.get("lpips"),
-                "splats": info.get("num_gaussians"),
-                "size_mb": (
-                    round(info["ply_size_bytes"] / 1e6, 1)
-                    if info.get("ply_size_bytes")
-                    else None
-                ),
-                "train_min": (
-                    round(info["train_seconds"] / 60, 1)
-                    if info.get("train_seconds")
-                    else None
-                ),
-                "trainer": info.get("trainer"),
-                "gpu": (info.get("gpu") or {}).get("name"),
-                "test_frames": ev.get("num_test_frames"),
-            }
-        )
+        about = VARIANTS.get(name, {}).get("about", "")
+        checkpoints = info.get("checkpoints") or []
+        for checkpoint in checkpoints:
+            rows.append(
+                _result_row(
+                    f"{name} @ {checkpoint['step'] // 1000}k",
+                    f"same run, after {checkpoint['step']:,} steps",
+                    checkpoint,
+                )
+            )
+        final_name = f"{name} @ {info['max_steps'] // 1000}k" if checkpoints else name
+        row = _result_row(final_name, about, info)
+        row.update(trainer=info.get("trainer"), gpu=(info.get("gpu") or {}).get("name"))
+        rows.append(row)
     return rows
 
 
@@ -293,13 +315,14 @@ def results_markdown(rows: list[dict[str, Any]]) -> str:
         return "–" if value is None else format(value, spec)
 
     lines = [
-        "| Variant | Change | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Splats | Size (MB) | Training (min) |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Variant | Change | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Splats | Size (MB) "
+        "| Training (min) | GPU mem (GB) |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         lines.append(
             f"| {r['variant']} | {r['about']} | {fmt(r['psnr'], '.2f')} | {fmt(r['ssim'], '.4f')} "
             f"| {fmt(r['lpips'], '.4f')} | {fmt(r['splats'], ',')} | {fmt(r['size_mb'], '.1f')} "
-            f"| {fmt(r['train_min'], '.1f')} |"
+            f"| {fmt(r['train_min'], '.1f')} | {fmt(r.get('gpu_mem_gb'), '.1f')} |"
         )
     return "\n".join(lines)

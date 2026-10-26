@@ -30,7 +30,7 @@ import numpy as np
 from colibrimo_pipeline.check import coordinate_check
 from colibrimo_pipeline.config import TrainConfig
 from colibrimo_pipeline.errors import PipelineError, StepError
-from colibrimo_pipeline.evaluate import run_evaluation, test_frame_names
+from colibrimo_pipeline.evaluate import EVAL_DIR, run_evaluation, test_frame_names
 from colibrimo_pipeline.gsplat_compat import apply_gsplat_fixes
 from colibrimo_pipeline.steps._brush import (
     brush_executable,
@@ -103,6 +103,8 @@ def build_train_command(
 
     ``flag`` spells the optional flags (see trainer_flag_speller)."""
     steps = str(cfg.max_steps)
+    # Checkpoints (D-023): gsplat also saves the splat + stats (time, GPU memory) there.
+    saved = [str(s) for s in saved_steps(cfg)]
     options: list[str] = []
     if cfg.strategy == "mcmc" and cfg.max_splats:
         options += [flag("strategy.cap_max"), str(cfg.max_splats)]
@@ -129,9 +131,9 @@ def build_train_command(
         "--eval_steps",
         "-1",  # evaluation is a separate step (PRD Step 2)
         "--save_steps",
-        steps,
+        *saved,
         "--ply_steps",
-        steps,
+        *saved,
         "--save_ply",
         "--disable_viewer",
         "--disable_video",
@@ -163,6 +165,29 @@ def trainer_flag_speller(python: str, examples_dir: Path, strategy: str):
 def expected_ply(result_dir: Path, max_steps: int) -> Path:
     # simple_trainer.py saves at `step == max_steps - 1` (0-based step counter).
     return result_dir / "ply" / f"point_cloud_{max_steps - 1}.ply"
+
+
+def saved_steps(cfg: TrainConfig) -> list[int]:
+    """Steps where gsplat saves the splat: the checkpoints, then the last step."""
+    return [*cfg.checkpoint_steps, cfg.max_steps]
+
+
+def read_train_stats(result_dir: Path, step: int) -> dict:
+    """gsplat's stats at a saved step: elapsed training time, peak GPU memory, splats.
+
+    simple_trainer.py writes ``stats/train_step<step-1>_rank0.json`` with ``mem``
+    (GB, torch.cuda.max_memory_allocated), ``ellipse_time`` (s since training
+    started) and ``num_GS`` at every save step. Empty dict if missing.
+    """
+    path = result_dir / "stats" / f"train_step{step - 1:04d}_rank0.json"
+    if not path.is_file():
+        return {}
+    stats = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        "train_seconds": round(float(stats["ellipse_time"]), 1),
+        "gpu_peak_mem_gb": round(float(stats["mem"]), 2),
+        "num_gaussians": int(stats["num_GS"]),
+    }
 
 
 def compute_transform(
@@ -198,6 +223,11 @@ def run(ctx: StepContext) -> StepResult:
 def run_brush(ctx: StepContext) -> StepResult:
     """Train with Brush (any GPU, Windows too). Coordinates stay COLMAP's (identity)."""
     cfg = ctx.config.train
+    if cfg.checkpoint_steps:
+        ctx.logger.warning(
+            "Warning: train.checkpoint_steps is gsplat only; Brush scores only its "
+            "final splat (use cpipe evaluate on Colab)."
+        )
     exe = brush_executable(ctx.config)
     sparse_model = ctx.manifest.step_output("poses", "sparse_model")  # colmap/sparse/0
     data_dir = sparse_model.parent.parent  # colmap/
@@ -475,6 +505,16 @@ def run_gsplat(ctx: StepContext) -> StepResult:
         ) as exc:  # keep the trained splat; say why there is no score
             ctx.logger.warning("Warning: %s", exc)
             evaluation = {"error": str(exc)[-500:]}
+    checkpoints = _score_checkpoints(
+        ctx,
+        result_dir,
+        sparse_model,
+        transform["matrix_4x4"],
+        test_frames,
+        python=python,
+        examples_dir=examples_dir,
+    )
+    final_stats = read_train_stats(result_dir, cfg.max_steps)
     return StepResult(
         outputs={"ply": ply, "transform": transform_path},
         info={
@@ -494,9 +534,60 @@ def run_gsplat(ctx: StepContext) -> StepResult:
             "test_every": cfg.test_every,
             "test_frames": test_frames,
             "evaluation": evaluation or None,
+            "gpu_peak_mem_gb": final_stats.get("gpu_peak_mem_gb"),
+            "checkpoints": checkpoints or None,
         },
         versions={"gpu_env": env_versions},
     )
+
+
+def _score_checkpoints(
+    ctx: StepContext,
+    result_dir: Path,
+    sparse_model: Path,
+    matrix: list[list[float]],
+    test_frames: list[str],
+    *,
+    python: str,
+    examples_dir: Path,
+) -> list[dict]:
+    """Score the splats gsplat saved at ``train.checkpoint_steps`` (D-023).
+
+    One entry per checkpoint: step, training time and peak GPU memory at that
+    step, splats, file size and the same scores as the final splat (or why not).
+    """
+    cfg = ctx.config.train
+    checkpoints = []
+    for step in cfg.checkpoint_steps:
+        entry: dict = {"step": step, **read_train_stats(result_dir, step)}
+        ply = expected_ply(result_dir, step)
+        if not ply.is_file():
+            entry["error"] = f"{ply.name} was not written"
+            checkpoints.append(entry)
+            continue
+        entry["num_gaussians"] = read_vertex_count(ply)
+        entry["ply_size_bytes"] = ply.stat().st_size
+        if test_frames:
+            ctx.logger.info("Checkpoint at step %d:", step)
+            try:
+                entry["evaluation"] = run_evaluation(
+                    ctx.run_dir,
+                    ply,
+                    sparse_model,
+                    matrix,
+                    test_frames,
+                    python=python,
+                    examples_dir=examples_dir,
+                    antialiased=cfg.antialiased,
+                    eval_images=cfg.eval_images,
+                    logger=ctx.logger,
+                    out_subdir=f"{EVAL_DIR}/step_{step}",
+                )
+            except PipelineError as exc:
+                ctx.logger.warning("Warning: %s", exc)
+                entry["evaluation"] = {"error": str(exc)[-500:]}
+        checkpoints.append(entry)
+    return checkpoints
 
 
 def _record_test_frames(

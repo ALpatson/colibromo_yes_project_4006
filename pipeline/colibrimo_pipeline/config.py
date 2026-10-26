@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from colibrimo_pipeline.errors import ConfigError
 
@@ -176,6 +183,12 @@ class TrainConfig(_Section):
         description="Side-by-side images (real | rendered) saved for this many fixed "
         "held-out frames.",
     )
+    checkpoint_steps: list[int] = Field(
+        default_factory=list,
+        description="gsplat only: also save and score the splat at these steps "
+        "(e.g. [7000, 15000]) to measure quality against training time in one run "
+        "(D-023). Each must be below max_steps.",
+    )
     brush_exe: str | None = Field(
         None,
         description="Brush executable (brush_app). Defaults to the CPIPE_BRUSH "
@@ -206,6 +219,26 @@ class TrainConfig(_Section):
         default_factory=list,
         description="Extra arguments for the trainer (simple_trainer.py or brush_app).",
     )
+
+    @field_validator("checkpoint_steps", mode="before")
+    @classmethod
+    def _parse_checkpoint_steps(cls, value: Any) -> Any:
+        """Also accept text: "[7000,15000]" or "7000,15000" (command line, forms)."""
+        if isinstance(value, str):
+            text = value.strip().strip("[]")
+            return [int(part) for part in text.split(",") if part.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _check_checkpoint_steps(self) -> TrainConfig:
+        bad = [s for s in self.checkpoint_steps if not 0 < s < self.max_steps]
+        if bad:
+            raise ValueError(
+                f"train.checkpoint_steps {bad} must be between 0 and max_steps "
+                f"({self.max_steps})."
+            )
+        self.checkpoint_steps = sorted(set(self.checkpoint_steps))
+        return self
 
 
 class PipelineConfig(_Section):

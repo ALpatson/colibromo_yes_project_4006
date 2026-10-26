@@ -80,11 +80,13 @@ def run_evaluation(
     antialiased: bool = False,
     eval_images: int = 5,
     logger: logging.Logger | None = None,
+    out_subdir: str = EVAL_DIR,
 ) -> dict[str, Any]:
     """Render ``ply`` at the held-out frames and score it; returns the summary
-    (the per-frame scores are in ``<run>/eval/eval.json``)."""
+    (the per-frame scores are in ``<run>/<out_subdir>/eval.json``, by default
+    ``<run>/eval/``; training checkpoints use ``eval/step_<N>/``, D-023)."""
     run_dir = Path(run_dir).resolve()
-    out_dir = run_dir / EVAL_DIR
+    out_dir = run_dir / out_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("*.png"):
         old.unlink()
@@ -117,7 +119,7 @@ def run_evaluation(
     summary = {
         k: v for k, v in scores.items() if k not in ("per_frame", "saved_images")
     }
-    summary["images"] = [f"{EVAL_DIR}/{Path(p).name}" for p in scores["saved_images"]]
+    summary["images"] = [f"{out_subdir}/{Path(p).name}" for p in scores["saved_images"]]
     if logger:
         logger.info("Score: %s.", describe(summary))
     return summary

@@ -2,6 +2,13 @@
 
 One entry per PRD step (newest first). Dates are YYYY-MM-DD.
 
+## 2026-10-26 · Step 2: quality against training time
+
+- `train.checkpoint_steps` (gsplat): one run also saves and scores the splat at earlier steps, with the training time and peak GPU memory at each (D-023). The final splat records `gpu_peak_mem_gb` (PRD R2.2).
+- Benchmark variant `steps-curve` (baseline + checkpoints at 7k and 15k); the results table has one row per checkpoint and a GPU memory column.
+- `docs/benchmarks.md`: myRoom2 results from the 21 Oct Colab runs (baseline best: 29.7 dB in 29 min; MCMC, full resolution, anti-aliasing, bilateral grid no better).
+- 244 CPU tests. Not yet run on Colab.
+
 ## 2026-10-21 · Step 4 (start): viewer prototype in the repository
 
 - `viewer/`: the first-person room viewer prototype (Vite + TypeScript + three.js + Spark): automatic levelling, eye height and walk area from the camera poses, walk/tour modes with hotspots, debug panel, snapshot mode for the quality check (D-022). Room data stays out of git.

@@ -76,10 +76,35 @@ without view-dependent colour (SH degree 0), so the viewer would lose that.
    notebook again in a new session to continue.
 4. Download `myRoom2_bench_results.zip` (scores, manifests, side-by-side images; no splats).
 
-### Results
+### Results (myRoom2, Colab T4, 30,000 steps, 2026-10-21)
 
-*Pending: the Colab runs.* The table will come from `bench.results_markdown` (PSNR, SSIM, LPIPS,
-splats, size, training time).
+Table from `bench.results_markdown`; per-variant files in `data/bench/myRoom2_results/` (team
+laptop, outside git). 38 held-out frames each.
+
+| Variant | Change | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Splats | Size (MB) | Training (min) | GPU mem (GB) |
+|---|---|---|---|---|---|---|---|---|
+| baseline | gsplat default strategy, 1600x900 frames (the Colab run of 15 Oct) | 29.73 | 0.9530 | 0.1275 | 714,621 | 168.7 | 29.1 | – |
+| mcmc-1M | MCMC strategy (its default budget: 1M splats) | 29.39 | 0.9512 | 0.1420 | 1,000,000 | 236.0 | 57.9 | – |
+| fullres | 1920x1080 frames (video resolution), same poses | 29.38 | 0.9514 | 0.1599 | 679,700 | 160.4 | 34.6 | – |
+| bilagrid | per-frame colour/exposure correction (use_bilateral_grid) | 25.49 | 0.9461 | 0.1404 | 691,865 | 163.3 | 54.9 | – |
+| antialiased | anti-aliased rasterization | 29.54 | 0.9521 | 0.1284 | 726,446 | 171.4 | 28.8 | – |
+
+Not run: `mcmc-2M` (CUDA out of memory on the T4's 15 GB), `mcmc-3M`, `brush-ref`.
+GPU memory was not recorded yet for these runs (added in D-023).
+
+**Reading:**
+- **The baseline (default settings) is the best and among the fastest.** No variant is worth its
+  extra time on this room; PSNR 29.7 dB is well above the 25 dB target.
+- `fullres` is scored on 1920x1080 frames, the others on 1600x900, so its numbers are not
+  directly comparable (larger images are harder to match pixel for pixel).
+- `bilagrid` learns a colour correction per *training* frame; held-out frames are rendered without
+  one, which lowers PSNR by construction. It may still look better; judge it on the images.
+
+### Next: quality against training time (Room4, D-023)
+
+Variant `steps-curve`: baseline settings, scored at 7k, 15k and 30k steps in one run, plus
+`brush-ref` (Brush on the team laptop's AMD Radeon 760M, 1280 px, max 1M splats, 38 frames held
+out). *Pending: the Colab run.*
 
 Side-by-side images show a private interior, so they stay **outside the repository**, in
 `C:\Users\JOSEPHINE\3DTests\benchmarks\myRoom2\<variant>\` (team laptop).
