@@ -349,3 +349,11 @@ So the camera models were **not** what broke NewRoom: with one shared camera and
 **Decision:** `train.checkpoint_steps` (gsplat only, e.g. `[7000, 15000]`): gsplat v1.5.3 saves the splat and its stats at those steps as well as at the end (`--save_steps` / `--ply_steps` take several values), and the train step scores each saved splat on the same held-out frames (`eval/step_<N>/`). Each checkpoint records its training time and peak GPU memory from gsplat's own `stats/train_step<N-1>_rank0.json` (`ellipse_time`, `mem`), so one run gives the quality-vs-time curve; the final splat also records `gpu_peak_mem_gb` (PRD R2.2). Benchmark variant `steps-curve` (= baseline + checkpoints at 7k and 15k); the results table gets one row per checkpoint and a GPU memory column. Brush ignores the setting with a warning (it scores only its final splat, on Colab).
 
 **Consequences:** checkpoint splats stay in `train/ply/` (about 100-170 MB each on Colab, not in the result zip; the scores travel in `manifest.json`). Not yet verified on Colab: that this gsplat version accepts several values for `--save_steps`/`--ply_steps` (tyro list options, as for `--eval_steps`).
+
+## D-024 · The coordinate check compares with every splat, not a sample · 2026-10-28
+
+**Context:** MeetingRoom3 (1,400 frames, 933 placed) trained on Colab with gsplat (2,858,063 splats) failed the coordinate check: 0.0167 against the 0.015 limit. The check compared 1,000 COLMAP points with a random sample of 50,000 splats. Measured on that splat (Colab, 2026-10-28), from 1,000 COLMAP points: 0.0165 with the 50,000-splat sample, **0.0050 with all splats**, 0.4793 without the scene transform. The splat was correct; the sample thinned the splats out, which grows with the number of splats. The same check of the laptop's Brush splat of that room (1M splats) gave 0.0131, now 0.0043.
+
+**Decision:** `identity_check` compares with every splat (brute force in chunks of about 50 million distances; about 6 s for 1M splats on the laptop). The limit stays 0.015, which is stricter than before since correct splats now score lower; wrong transforms still score far above it (tests: rescale, shift, 10 and 90 degree rotations).
+
+**Consequences:** big rooms no longer fail a correct splat. The 0.0072 / 0.029 / 0.064 calibration in D-013 was measured with the sample.

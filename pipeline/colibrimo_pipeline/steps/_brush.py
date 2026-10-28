@@ -100,16 +100,19 @@ def parse_adapter(line: str) -> dict[str, str] | None:
 # Median distance from a COLMAP point to the nearest splat, as a fraction of the
 # scene size, below which the splat counts as being in COLMAP's coordinates.
 # myRoom2 (Brush v0.3.0, 30k steps): 0.0072 as is; 0.029 after a 10 degree
-# rotation, 0.064 after a 10% shift (docs/decisions.md, D-013).
+# rotation, 0.064 after a 10% shift (docs/decisions.md, D-013). Those values were
+# measured against a 50,000-splat sample; the check now uses every splat (D-024).
 IDENTITY_THRESHOLD = 0.015
 
 
 def _nearest_distances(points: np.ndarray, others: np.ndarray) -> np.ndarray:
     """Distance from each point to its nearest neighbour in ``others`` (brute force)."""
     others_sq = (others**2).sum(axis=1)
+    # About 50 million distances per chunk (200 MB), however many splats there are.
+    step = max(1, 50_000_000 // max(len(others), 1))
     result = []
-    for start in range(0, len(points), 250):
-        chunk = points[start : start + 250]
+    for start in range(0, len(points), step):
+        chunk = points[start : start + step]
         d2 = (chunk**2).sum(axis=1)[:, None] + others_sq[None, :] - 2 * chunk @ others.T
         result.append(np.sqrt(np.maximum(d2.min(axis=1), 0)))
     return np.concatenate(result)
@@ -119,7 +122,7 @@ def identity_check(
     colmap_xyz: np.ndarray,
     splat_xyz: np.ndarray,
     max_points: int = 1000,
-    max_splats: int = 50_000,
+    max_splats: int | None = None,
 ) -> dict[str, Any]:
     """Do the splat and COLMAP's 3D points share the same coordinates?
 
@@ -128,12 +131,15 @@ def identity_check(
     right next to it; after any recentring, rescaling or rotation (what
     gsplat's normalisation does) most of them don't. Distances are measured
     relative to the scene size (median interquartile range of the COLMAP
-    points), on random samples (fixed seed) to keep it under a second.
+    points), from a random sample of COLMAP points (fixed seed) to every splat:
+    a sample of the splats thins them out, and in a large room (MeetingRoom3,
+    2.9M splats) a correct splat then failed (0.0165 with 50,000 splats, 0.0050
+    with all of them, 0.48 without the transform; D-024).
     """
     rng = np.random.default_rng(0)
 
-    def sample(xyz: np.ndarray, n: int) -> np.ndarray:
-        if len(xyz) > n:
+    def sample(xyz: np.ndarray, n: int | None) -> np.ndarray:
+        if n is not None and len(xyz) > n:
             xyz = xyz[rng.choice(len(xyz), n, replace=False)]
         return xyz.astype(np.float32)
 

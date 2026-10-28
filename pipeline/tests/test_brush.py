@@ -286,6 +286,18 @@ def test_identity_check_accepts_same_coordinates():
     assert result["median_nearest_splat_rel"] < result["threshold_rel"]
 
 
+def test_identity_check_uses_every_splat():
+    # Many splats away from COLMAP's points: a 50,000-splat sample would drop most
+    # of the ones next to them and fail a correct splat (MeetingRoom3, D-024).
+    rng = np.random.default_rng(3)
+    colmap = room_points(rng, 2000)
+    near = colmap + rng.normal(0, 0.005, colmap.shape)
+    elsewhere = rng.uniform(-1, 1, (300_000, 3))
+    result = identity_check(colmap, np.vstack([near, elsewhere]))
+    assert result["same_coordinates"] is True
+    assert result["num_splats"] == 302_000
+
+
 def rotate_y(degrees):
     a = np.radians(degrees)
     m = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])

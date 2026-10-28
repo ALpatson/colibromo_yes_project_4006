@@ -2,6 +2,10 @@
 
 One entry per PRD step (newest first). Dates are YYYY-MM-DD.
 
+## 2026-10-28 · Step 1: coordinate check fix
+
+- Fix (D-024): the coordinate check compares COLMAP's points with every splat instead of a 50,000-splat sample, which failed a correct splat of a large room (MeetingRoom3 on Colab, 2.9M splats: 0.0165 sampled, 0.0050 with all). The 0.015 limit is unchanged.
+
 ## 2026-10-26 · Step 2: quality against training time
 
 - `train.checkpoint_steps` (gsplat): one run also saves and scores the splat at earlier steps, with the training time and peak GPU memory at each (D-023). The final splat records `gpu_peak_mem_gb` (PRD R2.2).
